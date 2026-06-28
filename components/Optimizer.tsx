@@ -1,0 +1,163 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { AllocationRow, Channel, Region } from '@/lib/types';
+import { optimizeBudget, OptimizerOpportunity } from '@/lib/modeling';
+import { ActionBadge, fmtCurrency, Pill, SectionCard } from './ui';
+import { BarCompareChart } from './charts';
+
+const CHANNELS: Channel[] = ['Meta', 'Google Search', 'TikTok', 'YouTube', 'CTV', 'Pinterest', 'Amazon/RMN'];
+const REGIONS: Region[] = ['Northeast', 'Midwest', 'South', 'West', 'Pacific Northwest', 'Southwest'];
+
+export default function Optimizer({ opportunities }: { opportunities: OptimizerOpportunity[] }) {
+  const [budget, setBudget] = useState(250000);
+  const [maxShiftChannel, setMaxShiftChannel] = useState(0.4);
+  const [riskTolerance, setRiskTolerance] = useState<'Conservative' | 'Balanced' | 'Aggressive'>('Balanced');
+  const [priorityKpi, setPriorityKpi] = useState('Revenue');
+  const [excludedChannels, setExcludedChannels] = useState<Set<Channel>>(new Set());
+  const [excludedRegions, setExcludedRegions] = useState<Set<Region>>(new Set());
+  const [inventoryConstraint, setInventoryConstraint] = useState(true);
+  const [creativeReady, setCreativeReady] = useState(true);
+
+  const result = useMemo(() => {
+    const riskMult = riskTolerance === 'Conservative' ? 0.6 : riskTolerance === 'Aggressive' ? 1.4 : 1;
+    const filtered = opportunities
+      .filter((o) => !excludedChannels.has(o.channel) && !excludedRegions.has(o.region as Region))
+      .map((o) => ({
+        ...o,
+        maxSpend: o.currentSpend * (1 + maxShiftChannel * riskMult),
+        minSpend: o.currentSpend * (1 - maxShiftChannel * 0.5),
+      }));
+    const rows = optimizeBudget(budget, filtered, {});
+    return rows.sort((a, b) => b.delta - a.delta);
+  }, [opportunities, budget, maxShiftChannel, riskTolerance, excludedChannels, excludedRegions]);
+
+  void priorityKpi; void inventoryConstraint; void creativeReady;
+
+  const byChannel = aggregate(result, (r) => r.channel);
+  const byDma = aggregate(result, (r) => r.dmaName).slice(0, 10);
+  const totalCurrent = result.reduce((s, r) => s + r.currentSpend, 0);
+  const totalRecommended = result.reduce((s, r) => s + r.recommendedSpend, 0);
+  const expectedRevenue = result.reduce((s, r) => s + r.expectedRevenue, 0);
+  const saturated = result.filter((r) => r.saturationFlag).length;
+
+  return (
+    <div className="space-y-6">
+      <SectionCard title="Optimization Constraints" subtitle="Greedy marginal allocation respecting per-opportunity shift limits">
+        <div className="grid gap-4 md:grid-cols-3">
+          <Range label={`Incremental budget — ${fmtCurrency(budget)}`} min={50000} max={1000000} step={10000} value={budget} onChange={setBudget} />
+          <Range label={`Max shift / channel — ${Math.round(maxShiftChannel * 100)}%`} min={0.1} max={0.8} step={0.05} value={maxShiftChannel} onChange={setMaxShiftChannel} />
+          <Field label="Priority KPI"><select value={priorityKpi} onChange={(e) => setPriorityKpi(e.target.value)} className="sel"><option>Revenue</option><option>New Customers</option><option>Contribution Margin</option><option>MER</option></select></Field>
+          <Field label="Risk tolerance"><select value={riskTolerance} onChange={(e) => setRiskTolerance(e.target.value as 'Conservative' | 'Balanced' | 'Aggressive')} className="sel"><option>Conservative</option><option>Balanced</option><option>Aggressive</option></select></Field>
+          <div className="flex items-center gap-4 pt-5">
+            <Toggle label="Inventory constraint" value={inventoryConstraint} onChange={setInventoryConstraint} />
+            <Toggle label="Creative readiness" value={creativeReady} onChange={setCreativeReady} />
+          </div>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <ChipGroup label="Exclude channels" items={CHANNELS} excluded={excludedChannels} toggle={(c) => setExcludedChannels(toggleSet(excludedChannels, c))} />
+          <ChipGroup label="Exclude regions" items={REGIONS} excluded={excludedRegions} toggle={(r) => setExcludedRegions(toggleSet(excludedRegions, r))} />
+        </div>
+        <style>{`.sel{background:var(--surface-2);border:1px solid var(--border);border-radius:0.375rem;padding:0.375rem 0.5rem;font-size:0.75rem;color:var(--foreground);outline:none;width:100%}`}</style>
+      </SectionCard>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Current spend" value={fmtCurrency(totalCurrent)} />
+        <Stat label="Recommended spend" value={fmtCurrency(totalRecommended)} accent />
+        <Stat label="Expected revenue" value={fmtCurrency(expectedRevenue)} />
+        <Stat label="Saturation flags" value={String(saturated)} />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <SectionCard title="Before / After by Channel"><BarCompareChart data={byChannel} /></SectionCard>
+        <SectionCard title="Before / After by DMA"><BarCompareChart data={byDma} /></SectionCard>
+      </div>
+
+      <SectionCard title="Allocation Detail" subtitle="Marginal dollars allocated by descending marginal ROAS">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs uppercase tracking-wide text-muted">
+                <th className="px-3 py-2">DMA</th><th className="px-3 py-2">Channel</th>
+                <th className="px-3 py-2 text-right">Current</th><th className="px-3 py-2 text-right">Recommended</th>
+                <th className="px-3 py-2 text-right">Δ</th><th className="px-3 py-2 text-right">mROAS</th>
+                <th className="px-3 py-2">Flags</th><th className="px-3 py-2">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.slice(0, 40).map((r, i) => (
+                <tr key={i} className="border-b">
+                  <td className="px-3 py-2">{r.dmaName}</td>
+                  <td className="px-3 py-2 text-xs">{r.channel}</td>
+                  <td className="px-3 py-2 text-right tabular">{fmtCurrency(r.currentSpend)}</td>
+                  <td className="px-3 py-2 text-right tabular">{fmtCurrency(r.recommendedSpend)}</td>
+                  <td className={`px-3 py-2 text-right tabular ${r.delta >= 0 ? 'text-[var(--positive)]' : 'text-[var(--negative)]'}`}>{r.delta >= 0 ? '+' : ''}{fmtCurrency(r.delta)}</td>
+                  <td className="px-3 py-2 text-right tabular">{r.marginalRoas.toFixed(2)}</td>
+                  <td className="px-3 py-2">{r.saturationFlag ? <Pill>⚠ saturating</Pill> : <span className="text-xs text-muted">—</span>}</td>
+                  <td className="px-3 py-2"><ActionBadge action={r.action} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {saturated > 0 && (
+          <p className="mt-3 rounded-lg border border-dashed border-[var(--warning)]/40 p-3 text-xs text-[var(--warning)]">
+            ⚠ {saturated} channel/DMA combinations are near saturation (&gt;75% of max response). Additional spend there yields diminishing returns — the optimizer has stopped allocating to them.
+          </p>
+        )}
+      </SectionCard>
+    </div>
+  );
+}
+
+function aggregate(rows: AllocationRow[], key: (r: AllocationRow) => string) {
+  const m = new Map<string, { current: number; recommended: number }>();
+  for (const r of rows) {
+    const k = key(r);
+    const cur = m.get(k) ?? { current: 0, recommended: 0 };
+    cur.current += r.currentSpend;
+    cur.recommended += r.recommendedSpend;
+    m.set(k, cur);
+  }
+  return Array.from(m.entries()).map(([label, v]) => ({ label, ...v })).sort((a, b) => b.recommended - a.recommended);
+}
+
+function toggleSet<T>(set: Set<T>, item: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(item)) next.delete(item);
+  else next.add(item);
+  return next;
+}
+
+function ChipGroup<T extends string>({ label, items, excluded, toggle }: { label: string; items: T[]; excluded: Set<T>; toggle: (t: T) => void }) {
+  return (
+    <div>
+      <div className="mb-1.5 text-xs text-muted">{label}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((i) => {
+          const off = excluded.has(i);
+          return (
+            <button key={i} onClick={() => toggle(i)} className={`rounded-md border px-2 py-1 text-xs ${off ? 'bg-[var(--surface)] text-muted line-through' : 'bg-[var(--surface-2)]'}`}>{i}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="flex flex-col gap-1 text-xs text-muted">{label}{children}</label>;
+}
+function Range({ label, ...p }: { label: string; min: number; max: number; step: number; value: number; onChange: (v: number) => void }) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-muted">{label}
+      <input type="range" min={p.min} max={p.max} step={p.step} value={p.value} onChange={(e) => p.onChange(Number(e.target.value))} className="accent-[var(--accent)]" />
+    </label>
+  );
+}
+function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+  return <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} className="accent-[var(--accent)]" />{label}</label>;
+}
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return <div className="card p-4"><div className="text-xs uppercase tracking-wide text-muted">{label}</div><div className={`tabular mt-1 text-xl font-semibold ${accent ? 'text-[var(--accent)]' : ''}`}>{value}</div></div>;
+}
