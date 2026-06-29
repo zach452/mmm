@@ -16,6 +16,24 @@ export interface GeoRow {
   decompSeries: (DecompositionResult & { date: string })[];
   channelCurves: { channel: string; halfSaturation: number; maxResponse: number; currentSpend: number; interactionMultiplier: number }[];
   population: number;
+  hierarchical: {
+    n: number;
+    raw: number;
+    shrunk: number;
+    weight: number;
+    grandMean: number;
+    ciLower: number;
+    ciUpper: number;
+  } | null;
+  syntheticControl: {
+    weights: { dma: string; weight: number }[];
+    observed: number[];
+    counterfactual: number[];
+    dates: string[];
+    treatmentStartIndex: number;
+    cumulativeLift: number;
+    preRmse: number;
+  };
 }
 
 const REGIONS: (Region | 'All')[] = ['All', 'Northeast', 'Midwest', 'South', 'West', 'Pacific Northwest', 'Southwest'];
@@ -191,6 +209,7 @@ function Select<T extends string>({
 
 function DMAInsightDrawer({ row, onClose }: { row: GeoRow; onClose: () => void }) {
   const { rec } = row;
+  const [showHierarchical, setShowHierarchical] = useState(true);
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/50" onClick={onClose}>
       <div
@@ -244,6 +263,60 @@ function DMAInsightDrawer({ row, onClose }: { row: GeoRow; onClose: () => void }
           </div>
         </Section>
 
+        <Section title="Hierarchical Estimate (V3 · empirical-Bayes partial pooling)">
+          <button
+            onClick={() => setShowHierarchical((v) => !v)}
+            className="mb-2 rounded-md border px-3 py-1 text-xs text-muted hover:text-foreground"
+          >
+            {showHierarchical ? 'Hide' : 'Show'} hierarchical estimate
+          </button>
+          {showHierarchical &&
+            (row.hierarchical ? (
+              <div className="space-y-2 text-xs">
+                <div className="grid grid-cols-3 gap-2">
+                  <Stat label="Raw estimate" value={row.hierarchical.raw.toFixed(2)} sub={`n=${row.hierarchical.n} obs`} />
+                  <Stat
+                    label="Shrunk (pooled)"
+                    value={row.hierarchical.shrunk.toFixed(2)}
+                    sub={`CI ${row.hierarchical.ciLower.toFixed(2)}–${row.hierarchical.ciUpper.toFixed(2)}`}
+                  />
+                  <Stat
+                    label="Trust weight"
+                    value={`${Math.round(row.hierarchical.weight * 100)}%`}
+                    sub={`pool mean ${row.hierarchical.grandMean.toFixed(2)}`}
+                  />
+                </div>
+                <p className="leading-relaxed text-muted">
+                  The raw per-DMA incrementality estimate is partially pooled toward the cross-DMA grand mean
+                  ({row.hierarchical.grandMean.toFixed(2)}). This market keeps{' '}
+                  <strong className="text-foreground">{Math.round(row.hierarchical.weight * 100)}%</strong> of its own
+                  estimate; the rest is borrowed from the pool. Small-sample / noisy DMAs have a lower trust weight and
+                  shrink <em>more</em> toward the mean — large, stable DMAs shrink less. The interval is a real
+                  nonparametric bootstrap (90%) over daily samples. This is an empirical-Bayes approximation to a full
+                  Bayesian hierarchical MMM (Stan/PyMC NUTS in a future V4+).
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted">No hierarchical estimate available for this DMA.</p>
+            ))}
+        </Section>
+
+        <Section title="Synthetic Control Lift (V4 · causal counterfactual)">
+          <SyntheticControlChart sc={row.syntheticControl} />
+          <p className="mt-2 text-xs leading-relaxed text-muted">
+            Donor weights (same-region DMAs):{' '}
+            {row.syntheticControl.weights
+              .filter((w) => w.weight > 0.001)
+              .sort((a, b) => b.weight - a.weight)
+              .slice(0, 4)
+              .map((w) => `${w.dma} ${Math.round(w.weight * 100)}%`)
+              .join(' · ') || 'none'}
+            . Pre-period fit RMSE {Math.round(row.syntheticControl.preRmse).toLocaleString()}. Cumulative post-period
+            lift {fmtCurrency(Math.round(row.syntheticControl.cumulativeLift))}. Hand-rolled synthetic control
+            (projected-gradient simplex weights) on real mock sales — same estimand as Synth/gsynth.
+          </p>
+        </Section>
+
         <Section title="Recommended Media Plan">
           <ul className="space-y-1 text-xs text-muted">
             <li>· Primary channel: <strong className="text-foreground">{rec.topChannel}</strong> ({rec.funnelFocus})</li>
@@ -277,6 +350,34 @@ function DMAInsightDrawer({ row, onClose }: { row: GeoRow; onClose: () => void }
         </Section>
       </div>
     </div>
+  );
+}
+
+function SyntheticControlChart({ sc }: { sc: GeoRow['syntheticControl'] }) {
+  const { observed, counterfactual, treatmentStartIndex } = sc;
+  const n = observed.length;
+  if (n === 0) return <p className="text-xs text-muted">No series available.</p>;
+  const all = [...observed, ...counterfactual];
+  const min = Math.min(...all);
+  const max = Math.max(...all);
+  const range = max - min || 1;
+  const W = 520;
+  const H = 140;
+  const x = (i: number) => (i / Math.max(1, n - 1)) * W;
+  const y = (v: number) => H - ((v - min) / range) * H;
+  const path = (series: number[]) =>
+    series.map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+  const splitX = x(treatmentStartIndex);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 160 }}>
+      <rect x={splitX} y={0} width={W - splitX} height={H} fill="var(--accent)" opacity={0.06} />
+      <line x1={splitX} y1={0} x2={splitX} y2={H} stroke="var(--accent)" strokeDasharray="3 3" strokeWidth={1} />
+      <path d={path(counterfactual)} fill="none" stroke="#a78bfa" strokeWidth={1.5} strokeDasharray="4 3" />
+      <path d={path(observed)} fill="none" stroke="#34d399" strokeWidth={1.75} />
+      <text x={4} y={12} fontSize={9} fill="#34d399">observed</text>
+      <text x={4} y={24} fontSize={9} fill="#a78bfa">synthetic counterfactual</text>
+      <text x={splitX + 4} y={H - 4} fontSize={9} fill="var(--accent)">intervention →</text>
+    </svg>
   );
 }
 

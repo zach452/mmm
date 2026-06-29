@@ -5,11 +5,21 @@
  */
 import {
   generateDMAs,
+  generateMedia,
+  generateSales,
   generateWeatherForDMA,
   generateWeatherForecast,
   HISTORY_DAYS,
   PRODUCT_CATEGORIES,
 } from './mockData';
+import {
+  shrinkDmaIncrementality,
+  type DmaIncrementalityResult,
+} from './modeling/v3-bayesian';
+import {
+  syntheticControlEstimate,
+  type SyntheticControlResult,
+} from './modeling/v4-causal';
 import {
   calculateCategoryTriggerIndex,
   calculateIndoorBehaviorIndex,
@@ -212,3 +222,76 @@ export function getDecompositionSeries(
 }
 
 export { generateWeatherForecast };
+
+// ---------------------------------------------------------------------------
+// V3: hierarchical (partially-pooled) per-DMA media incrementality + CIs.
+// ---------------------------------------------------------------------------
+let _shrunk: Map<string, DmaIncrementalityResult> | null = null;
+
+export function getHierarchicalIncrementality(): Map<string, DmaIncrementalityResult> {
+  if (_shrunk) return _shrunk;
+  const dmas = generateDMAs();
+  const media = generateMedia(dmas, HISTORY_DAYS);
+  const results = shrinkDmaIncrementality(
+    dmas.map((d) => ({ id: d.id, region: d.region })),
+    media,
+  );
+  _shrunk = new Map(results.map((r) => [r.dma, r]));
+  return _shrunk;
+}
+
+// ---------------------------------------------------------------------------
+// V4: synthetic control for one DMA using same-region donors (real sales series).
+// ---------------------------------------------------------------------------
+export interface SyntheticControlView extends SyntheticControlResult {
+  treatmentDma: string;
+  treatmentName: string;
+  category: ProductCategory;
+  observed: number[];
+  dates: string[];
+  treatmentStartIndex: number;
+}
+
+/** Daily total-revenue series for a DMA (summed across categories) over recent window. */
+function dmaRevenueSeries(dmaId: string, days: number): { dates: string[]; series: number[] } {
+  const sales = generateSales(generateDMAs(), HISTORY_DAYS).filter((s) => s.dma === dmaId);
+  const byDate = new Map<string, number>();
+  for (const s of sales) byDate.set(s.date, (byDate.get(s.date) ?? 0) + s.revenue);
+  const dates = Array.from(byDate.keys()).sort().slice(-days);
+  return { dates, series: dates.map((d) => byDate.get(d) ?? 0) };
+}
+
+export function getSyntheticControl(
+  treatmentDmaId: string,
+  category: ProductCategory = 'Hydration',
+  days = 60,
+): SyntheticControlView {
+  const dmas = generateDMAs();
+  const treatment = dmas.find((d) => d.id === treatmentDmaId) ?? dmas[0];
+  const donorsDmas = dmas.filter((d) => d.region === treatment.region && d.id !== treatment.id);
+
+  const t = dmaRevenueSeries(treatment.id, days);
+  const donorSeries = donorsDmas
+    .map((d) => ({ dma: d.id, name: d.name, series: dmaRevenueSeries(d.id, days).series }))
+    .filter((d) => d.series.length === t.series.length);
+
+  const treatmentStartIndex = Math.round(t.series.length * 0.7);
+  const res = syntheticControlEstimate(
+    t.series,
+    donorSeries.map((d) => ({ dma: d.dma, series: d.series })),
+    treatmentStartIndex,
+  );
+
+  // map donor names into weights for display
+  const nameByDma = new Map(donorSeries.map((d) => [d.dma, d.name]));
+  return {
+    ...res,
+    weights: res.weights.map((w) => ({ dma: nameByDma.get(w.dma) ?? w.dma, weight: w.weight })),
+    treatmentDma: treatment.id,
+    treatmentName: treatment.name,
+    category,
+    observed: t.series,
+    dates: t.dates,
+    treatmentStartIndex,
+  };
+}

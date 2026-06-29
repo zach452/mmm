@@ -62,9 +62,35 @@ The roadmap's V2 milestone ("Live weather API + real client data spine; calibrat
 - **Severe-weather flag** under live weather is a precipitation/snow-threshold proxy (no severe field in the daily endpoint).
 - **DMA lat/lon** are approximate metro coordinates from a lookup table.
 - **Data spine consumption** is wired into one page (`/mmm`) to prove the flow end-to-end; the other routes still read mock data. The baseline/media split from uploaded data is a transparent heuristic (a true joint estimate is V3).
-- **V3/V4** (Bayesian hierarchical MMM, causal/structural model, automated experiments, platform activation) remain future work.
+- **V3/V4 core algorithms are now implemented** with real TypeScript (see "V3 & V4 — Implemented" below). What remains aspirational: full MCMC posterior sampling, and real OAuth/webhook/SMTP credentials for live platform activation and alerting.
 
 > **Env:** set `WEATHER_PROVIDER=live` to make server-rendered weather use Open-Meteo (no key needed); see `.env.example`. The `/weather` Live toggle works regardless of this var.
+
+## V3 & V4 — Implemented
+
+The roadmap's V3 and V4 milestones now ship **real, genuinely-computed TypeScript algorithms** (not prose), with anything needing external production infra clearly stubbed.
+
+### V3 — Bayesian hierarchical MMM (empirical-Bayes) + experiment feedback loop
+
+- **Hierarchical partial pooling** (`lib/modeling/v3-bayesian.ts` → `hierarchicalShrinkage`). Real empirical-Bayes / James-Stein shrinkage: computes a precision-weighted grand mean, estimates between-group variance (τ²) by method-of-moments, and shrinks each group toward the pool by reliability weight `τ² / (τ² + σ²/n)`. Small-sample / noisy DMAs visibly shrink more. **Genuine math; labeled as an empirical-Bayes approximation to a full Stan/PyMC NUTS hierarchical model (V4+).**
+- **Bootstrap credible intervals** (`bootstrapCredibleInterval`). Real nonparametric percentile bootstrap (seeded, deterministic) that wraps point estimates (e.g. marginal ROAS, incrementality) with `[α/2, 1-α/2]` bounds that widen with variance.
+- **Applied shrinkage** (`shrinkDmaIncrementality`) computes per-DMA incrementality from mock media history and partially pools across DMAs, returning raw + shrunk estimates and a bootstrap CI. Surfaced in the **`/geo` DMA drawer** ("Hierarchical estimate" toggle).
+- **Experiment feedback loop** (`lib/modeling/v3-feedback.ts` → `applyExperimentReadout`). Combines a prior model recommendation with a geo-test readout: confirming evidence raises confidence and upgrades toward Act; a significant contradicting result flips toward Suppress/Ignore and flags "model overridden by experiment evidence"; inconclusive lowers confidence and holds Monitor/Test. Demonstrated end-to-end on **`/experiments`** ("Simulate readout → update recommendation", seeded RNG).
+
+### V4 — Causal model, automated geo experiments, guardrailed activation
+
+- **Synthetic control** (`lib/modeling/v4-causal.ts` → `syntheticControlEstimate`). Real hand-rolled synthetic control: finds non-negative donor weights on the simplex (Euclidean simplex projection + projected gradient descent) that reconstruct the treatment unit's pre-period, then builds a post-period counterfactual and reads off per-period and cumulative lift. Same estimand as `Synth`/`gsynth`, no heavy deps. Charted in the **`/geo` drawer** on real mock sales (treatment DMA vs same-region donors).
+- **Automated geo experiment design** (`automatedGeoExperimentDesign`). Greedily lays out multiple **non-overlapping** treatment/control clusters ranked by investability (opportunity × mROAS × confidence), drawing matched controls via the existing `selectMatchedMarkets`, with expected-power scoring. Runs live on **`/experiments`** ("Generate automated experiment slate").
+- **Activation guardrails** (`lib/modeling/v4-guardrails.ts` → `evaluateActivationGuardrails`). Real branching rules: block on out-of-stock + increasing spend; block on not-ready creative for large increases; block/warn on marginal-ROAS CI lower bound (reusing V3's bootstrap) below breakeven; warn on step changes exceeding a risk-tolerance cap. Shown per-row on **`/optimizer`**.
+- **Platform activation connectors** (`lib/integrations/`). `ActivationConnector` / `AlertConnector` interfaces with **clearly-labeled stub implementations** — `MetaAdsStubConnector`, `GoogleAdsStubConnector` run the guardrail check before refusing or returning `{ success, simulated: true, note: "Stub — V5 would call the real Meta/Google API with OAuth" }`; `SlackAlertStubConnector` / `EmailAlertStubConnector` log and return simulated results. **No real API calls** — the "Push to platforms (simulated)" button on `/optimizer` exercises the full path including a simulated Slack alert on blocked rows.
+
+### Still stubbed / out of V3–V4 scope (needs production infra in V5)
+
+- **Full posterior sampling** (MCMC/Stan/PyMC NUTS) — the empirical-Bayes shrinkage + bootstrap is a real but lighter approximation.
+- **Real OAuth platform integrations** (Meta Marketing API, Google Ads API) — connectors are interface-correct stubs; no credentials exist in this demo.
+- **Real Slack/email delivery** — alert connectors log + return simulated results; real webhook/SMTP credentials are V5.
+
+Tests: `lib/modeling/v3.test.ts` and `v4.test.ts` cover shrinkage monotonicity, bootstrap CI bracketing/widening, feedback-loop direction flips, synthetic-control weight constraints + pre-period reconstruction RMSE, non-overlapping cluster design, and guardrail block/approve cases.
 
 ## Run Locally
 
@@ -92,17 +118,17 @@ Where the MVP uses simplified stand-ins (flagged in code), production would add:
 
 - **Real weather API integration** — replace the seeded weather generator with a live forecast provider (history + 14-day forecast per DMA), with confidence by horizon.
 - **Real MMM engine** — fit Hill curves and adstock from actual client spend/response history.
-- **Bayesian / hierarchical model service** — partial pooling across DMAs with credible intervals replacing the deterministic indices and point estimates.
-- **Experiment calibration loop** — geo lift / matched-market / synthetic-control readouts feed back as priors that update the model.
+- **Bayesian / hierarchical model service** — *V3 implemented* as empirical-Bayes partial pooling with bootstrap credible intervals; full MCMC posterior sampling remains.
+- **Experiment calibration loop** — *V3 implemented* (`applyExperimentReadout`); readouts feed back to update recommendations.
 - **Data warehouse integration** — the normalized spine sourced from Snowflake/BigQuery instead of CSV upload.
-- **Platform activation integrations** — push optimizer outputs to Meta/Google/TikTok/RMN with guardrails and human approval.
-- **Slack / email alerting** — notify strategists when a high-opportunity weather window or suppression risk emerges.
+- **Platform activation integrations** — *V4 implemented as guardrailed stub connectors*; real OAuth push to Meta/Google/TikTok/RMN is V5.
+- **Slack / email alerting** — *V4 implemented as stub connectors*; real webhook/SMTP delivery is V5.
 - **Scheduled forecast jobs** — nightly regeneration of forecasts, indices, and recommendations.
 
 ## Future Model Upgrades
 
-- Structural/causal demand model separating weather, media, price, and distribution effects.
-- Automated geo experimentation with sequential testing and MDE computation.
+- Structural/causal demand model separating weather, media, price, and distribution effects — *V4 ships a real synthetic-control causal estimator*; a full structural model with price/distribution terms remains.
+- Automated geo experimentation — *V4 ships automated multi-cluster geo design*; sequential testing and formal MDE/power computation remain.
 - Per-channel saturation re-estimation as spend patterns shift.
 - Uncertainty-aware budget optimization (allocate against the full posterior, not point estimates).
 

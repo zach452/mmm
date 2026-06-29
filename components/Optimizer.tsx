@@ -3,8 +3,30 @@
 import { useMemo, useState } from 'react';
 import { AllocationRow, Channel, Region } from '@/lib/types';
 import { optimizeBudget, OptimizerOpportunity } from '@/lib/modeling';
+import {
+  evaluateActivationGuardrails,
+  type GuardrailResult,
+} from '@/lib/modeling/v4-guardrails';
+import { MetaAdsStubConnector, GoogleAdsStubConnector } from '@/lib/integrations/stubConnectors';
+import { SlackAlertStubConnector } from '@/lib/integrations/alerting';
+import type { ActivationResult } from '@/lib/integrations/types';
+import { mulberry32, hashSeed } from '@/lib/rng';
 import { ActionBadge, fmtCurrency, Pill, SectionCard } from './ui';
 import { BarCompareChart } from './charts';
+
+const META_CONNECTOR = new MetaAdsStubConnector();
+const GOOGLE_CONNECTOR = new GoogleAdsStubConnector();
+const SLACK_ALERT = new SlackAlertStubConnector();
+
+function rowInventory(dma: string, channel: string): 'Healthy' | 'Constrained' | 'Out of Stock' {
+  const r = mulberry32(hashSeed(`inv-${dma}-${channel}`))();
+  if (r < 0.1) return 'Out of Stock';
+  if (r < 0.25) return 'Constrained';
+  return 'Healthy';
+}
+function rowCreativeReady(dma: string, channel: string): boolean {
+  return mulberry32(hashSeed(`crt-${dma}-${channel}`))() > 0.2;
+}
 
 const CHANNELS: Channel[] = ['Meta', 'Google Search', 'TikTok', 'YouTube', 'CTV', 'Pinterest', 'Amazon/RMN'];
 const REGIONS: Region[] = ['Northeast', 'Midwest', 'South', 'West', 'Pacific Northwest', 'Southwest'];
@@ -53,6 +75,69 @@ export default function Optimizer({
   }, [opportunities, budget, maxShiftChannel, riskTolerance, excludedChannels, excludedRegions, useCalibrated, calibration]);
 
   void priorityKpi; void inventoryConstraint; void creativeReady;
+
+  // V4 guardrails: evaluate each allocation row.
+  const guardrails = useMemo(() => {
+    const map = new Map<string, GuardrailResult>();
+    for (const r of result) {
+      const key = `${r.dma}-${r.channel}`;
+      const point = r.marginalRoas;
+      // synthesize a plausible CI around the marginal ROAS (deterministic spread).
+      const spread = 0.35 + mulberry32(hashSeed(`ci-${key}`))() * 0.4;
+      const res = evaluateActivationGuardrails(
+        {
+          dma: r.dma,
+          channel: r.channel,
+          proposedSpendChange: r.delta,
+          currentSpend: r.currentSpend,
+        },
+        {
+          inventoryStatus: rowInventory(r.dma, r.channel),
+          creativeReadiness: rowCreativeReady(r.dma, r.channel),
+          marginalRoasCI: { point, lower: point - spread, upper: point + spread },
+          riskTolerance,
+        },
+      );
+      map.set(key, res);
+    }
+    return map;
+  }, [result, riskTolerance]);
+
+  const [pushResults, setPushResults] = useState<ActivationResult[] | null>(null);
+  const [pushing, setPushing] = useState(false);
+
+  async function pushToPlatforms() {
+    setPushing(true);
+    const increasing = result.filter((r) => r.delta > 0);
+    const results: ActivationResult[] = [];
+    let blockedCount = 0;
+    for (const r of increasing.slice(0, 25)) {
+      const connector = r.channel === 'Google Search' ? GOOGLE_CONNECTOR : META_CONNECTOR;
+      const point = r.marginalRoas;
+      const spread = 0.35 + mulberry32(hashSeed(`ci-${r.dma}-${r.channel}`))() * 0.4;
+      const res = await connector.pushBudgetChange(
+        { dma: r.dma, channel: r.channel, proposedSpendChange: r.delta, currentSpend: r.currentSpend },
+        r.recommendedSpend,
+        {
+          inventoryStatus: rowInventory(r.dma, r.channel),
+          creativeReadiness: rowCreativeReady(r.dma, r.channel),
+          marginalRoasCI: { point, lower: point - spread, upper: point + spread },
+          riskTolerance,
+        },
+      );
+      if (!res.success) blockedCount++;
+      results.push(res);
+    }
+    if (blockedCount > 0) {
+      await SLACK_ALERT.send({
+        title: 'Activation guardrails blocked rows',
+        body: `${blockedCount} of ${results.length} proposed pushes were blocked by guardrails (inventory / creative / ROAS).`,
+        severity: 'warning',
+      });
+    }
+    setPushResults(results);
+    setPushing(false);
+  }
 
   const byChannel = aggregate(result, (r) => r.channel);
   const byDma = aggregate(result, (r) => r.dmaName).slice(0, 10);
@@ -145,7 +230,7 @@ export default function Optimizer({
                 <th className="px-3 py-2">DMA</th><th className="px-3 py-2">Channel</th>
                 <th className="px-3 py-2 text-right">Current</th><th className="px-3 py-2 text-right">Recommended</th>
                 <th className="px-3 py-2 text-right">Δ</th><th className="px-3 py-2 text-right">mROAS</th>
-                <th className="px-3 py-2">Flags</th><th className="px-3 py-2">Action</th>
+                <th className="px-3 py-2">Flags</th><th className="px-3 py-2">Guardrail</th><th className="px-3 py-2">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -158,6 +243,7 @@ export default function Optimizer({
                   <td className={`px-3 py-2 text-right tabular ${r.delta >= 0 ? 'text-[var(--positive)]' : 'text-[var(--negative)]'}`}>{r.delta >= 0 ? '+' : ''}{fmtCurrency(r.delta)}</td>
                   <td className="px-3 py-2 text-right tabular">{r.marginalRoas.toFixed(2)}</td>
                   <td className="px-3 py-2">{r.saturationFlag ? <Pill>⚠ saturating</Pill> : <span className="text-xs text-muted">—</span>}</td>
+                  <td className="px-3 py-2"><GuardrailBadge g={guardrails.get(`${r.dma}-${r.channel}`)} delta={r.delta} /></td>
                   <td className="px-3 py-2"><ActionBadge action={r.action} /></td>
                 </tr>
               ))}
@@ -170,7 +256,92 @@ export default function Optimizer({
           </p>
         )}
       </SectionCard>
+
+      <SectionCard
+        title="Platform Activation (V4 · guardrailed, simulated)"
+        subtitle="Each spend increase is checked against activation guardrails (inventory, creative readiness, marginal-ROAS CI vs breakeven, step-size cap) before being pushed. Connectors are clearly-labeled stubs — V5 would use real Meta/Google OAuth credentials."
+      >
+        <button
+          onClick={pushToPlatforms}
+          disabled={pushing}
+          className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-black disabled:opacity-60"
+        >
+          {pushing ? 'Pushing…' : 'Push to platforms (simulated)'}
+        </button>
+        {pushResults && (
+          <div className="mt-4 space-y-2">
+            <p className="text-xs text-muted">
+              {pushResults.filter((r) => r.success).length} pushed (simulated) ·{' '}
+              {pushResults.filter((r) => !r.success).length} blocked by guardrails. All results are{' '}
+              <strong className="text-foreground">simulated — no real API calls were made</strong>.
+            </p>
+            <div className="max-h-72 overflow-y-auto rounded-lg border">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b text-left uppercase tracking-wide text-muted">
+                    <th className="px-3 py-2">DMA</th><th className="px-3 py-2">Channel</th>
+                    <th className="px-3 py-2">Platform</th><th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pushResults.map((r, i) => (
+                    <tr key={i} className="border-b">
+                      <td className="px-3 py-2">{r.dma}</td>
+                      <td className="px-3 py-2">{r.channel}</td>
+                      <td className="px-3 py-2">{r.platform}</td>
+                      <td className="px-3 py-2">
+                        {r.success ? (
+                          <span className="text-[var(--positive)]">✓ pushed (sim)</span>
+                        ) : (
+                          <span className="text-[var(--negative)]">✕ blocked</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-muted">
+                        {r.success ? r.note : (r.blockedReasons ?? []).join(' ')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="rounded-lg border border-dashed border-[var(--accent)]/40 p-2.5 text-xs text-muted">
+              A simulated Slack alert fires via the stub alert connector whenever rows are blocked (see console). Real
+              webhook/SMTP delivery requires production credentials in V5+.
+            </p>
+          </div>
+        )}
+      </SectionCard>
     </div>
+  );
+}
+
+function GuardrailBadge({ g, delta }: { g: GuardrailResult | undefined; delta: number }) {
+  if (!g || delta <= 0) return <span className="text-xs text-muted">—</span>;
+  if (!g.approved) {
+    return (
+      <span
+        title={g.blockedReasons.join(' ')}
+        className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-[var(--negative)]/15 text-[var(--negative)]"
+      >
+        ✕ blocked
+      </span>
+    );
+  }
+  if (g.warnings.length) {
+    return (
+      <span
+        title={g.warnings.join(' ')}
+        className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-[var(--warning)]/15 text-[var(--warning)]"
+      >
+        ⚠ warn
+      </span>
+    );
+  }
+  return (
+    <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-[var(--positive)]/15 text-[var(--positive)]">
+      ✓ approved
+    </span>
   );
 }
 
