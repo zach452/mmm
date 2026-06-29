@@ -97,6 +97,39 @@ const CITY_POOL: Record<Region, string[]> = {
   Southwest: ['Phoenix', 'Tucson', 'Albuquerque', 'El Paso', 'San Antonio', 'Austin', 'Oklahoma City'],
 };
 
+// Approximate lat/lon for each metro in CITY_POOL — used by the live weather
+// provider (Open-Meteo) to fetch real forecasts. Approximate is fine; these are
+// downtown-ish coordinates for the metro. Any city not listed falls back to a
+// region centroid (see REGION_CENTROID).
+const CITY_LATLON: Record<string, [number, number]> = {
+  'New York': [40.71, -74.01], Boston: [42.36, -71.06], Philadelphia: [39.95, -75.17],
+  Hartford: [41.76, -72.69], Providence: [41.82, -71.41], Albany: [42.65, -73.76],
+  Buffalo: [42.89, -78.88], Pittsburgh: [40.44, -79.99], 'Portland ME': [43.66, -70.26],
+  Chicago: [41.88, -87.63], Detroit: [42.33, -83.05], Minneapolis: [44.98, -93.27],
+  Cleveland: [41.5, -81.69], Columbus: [39.96, -82.99], Indianapolis: [39.77, -86.16],
+  Milwaukee: [43.04, -87.91], 'Kansas City': [39.1, -94.58], 'St. Louis': [38.63, -90.2],
+  Cincinnati: [39.1, -84.51], Atlanta: [33.75, -84.39], Miami: [25.76, -80.19],
+  Dallas: [32.78, -96.8], Houston: [29.76, -95.37], Orlando: [28.54, -81.38],
+  Tampa: [27.95, -82.46], Charlotte: [35.23, -80.84], Nashville: [36.16, -86.78],
+  'New Orleans': [29.95, -90.07], Memphis: [35.15, -90.05], 'Los Angeles': [34.05, -118.24],
+  'San Francisco': [37.77, -122.42], 'San Diego': [32.72, -117.16], Sacramento: [38.58, -121.49],
+  'Las Vegas': [36.17, -115.14], 'Salt Lake City': [40.76, -111.89], Denver: [39.74, -104.99],
+  Fresno: [36.74, -119.79], Seattle: [47.61, -122.33], 'Portland OR': [45.52, -122.68],
+  Spokane: [47.66, -117.43], Boise: [43.62, -116.21], Eugene: [44.05, -123.09],
+  Phoenix: [33.45, -112.07], Tucson: [32.22, -110.97], Albuquerque: [35.08, -106.65],
+  'El Paso': [31.76, -106.49], 'San Antonio': [29.42, -98.49], Austin: [30.27, -97.74],
+  'Oklahoma City': [35.47, -97.52],
+};
+
+const REGION_CENTROID: Record<Region, [number, number]> = {
+  Northeast: [42.0, -73.0],
+  Midwest: [41.5, -87.0],
+  South: [33.0, -86.0],
+  West: [37.0, -119.0],
+  'Pacific Northwest': [46.0, -122.0],
+  Southwest: [33.5, -106.0],
+};
+
 const CLIMATE_BY_REGION: Record<Region, { baseTempC: number; amp: number; precip: number; snow: boolean; uv: boolean; aq: number }> = {
   Northeast: { baseTempC: 11, amp: 14, precip: 3.2, snow: true, uv: false, aq: 0.25 },
   Midwest: { baseTempC: 10, amp: 16, precip: 2.8, snow: true, uv: false, aq: 0.3 },
@@ -119,12 +152,15 @@ export function generateDMAs(): DMA[] {
       const rand = mulberry32(seed);
       const c = CLIMATE_BY_REGION[region];
       counter++;
+      const [lat, lon] = CITY_LATLON[city] ?? REGION_CENTROID[region];
       dmas.push({
         id: `DMA-${String(counter).padStart(3, '0')}`,
         name: city,
         region,
         population: Math.round((300_000 + rand() * 8_000_000) / 1000) * 1000,
         baselineIndex: Math.round((85 + rand() * 35) * 10) / 10,
+        lat,
+        lon,
         climate: {
           baseTempC: c.baseTempC + gaussian(rand, 0, 1.5),
           seasonalAmplitude: c.amp + gaussian(rand, 0, 1.5),
@@ -141,7 +177,7 @@ export function generateDMAs(): DMA[] {
 }
 
 // Seasonal temperature model: peak summer near day 200 of year.
-function seasonalTemp(dma: DMA, date: Date): number {
+export function seasonalTemp(dma: DMA, date: Date): number {
   const dayOfYear = Math.floor(
     (date.getTime() - new Date(Date.UTC(date.getUTCFullYear(), 0, 0)).getTime()) / 86400000,
   );
@@ -149,7 +185,7 @@ function seasonalTemp(dma: DMA, date: Date): number {
   return dma.climate.baseTempC + dma.climate.seasonalAmplitude * Math.cos(phase);
 }
 
-function deriveRegime(
+export function deriveRegime(
   obs: Omit<WeatherObservation, 'regime'>,
   dma: DMA,
   prevWarm: boolean,

@@ -2,7 +2,7 @@
 
 A weather-responsive **geo marketing-mix-modeling (MMM)** and **budget-investment decisioning** tool for media agencies. It separates demand that *would have happened anyway* (weather + seasonality) from demand that *media actually caused*, then recommends where, when, and how much to invest across DMAs, channels, and the funnel.
 
-> **MVP / Demo Mode.** All data is synthetic and deterministically generated. The modeling layer uses transparent, interpretable **heuristic models that stand in for a future production Bayesian/causal MMM** — every such simplification is labeled in code (`lib/modeling/index.ts`) and in the in-app Methodology page.
+> **MVP / Demo Mode + V2 live integrations.** The demo runs on synthetic, deterministically-generated data by default. The modeling layer uses transparent, interpretable **heuristic models that stand in for a future production Bayesian/causal MMM** — every such simplification is labeled in code (`lib/modeling/index.ts`) and in the in-app Methodology page. **V2 is now implemented:** real Open-Meteo live weather, real CSV ingestion + validation driving a session data spine, and Hill-curve calibration from historical spend (see "V2 — Implemented" below).
 
 ## Product Overview
 
@@ -44,6 +44,27 @@ Normalized panel keyed on **DMA × day × product × channel**, joined from:
 - **Weather** — date, dma, temperature, temp_anomaly, precipitation, snow, humidity, uv_index, air_quality, severe_weather_flag
 
 The `/data` route previews and quality-checks these in-browser.
+
+## V2 — Implemented
+
+The roadmap's V2 milestone ("Live weather API + real client data spine; calibrated Hill curves from historical spend") is now **built and wired into the app**, not just aspirational text.
+
+### What's real
+
+- **Live weather via Open-Meteo** (`lib/weather/`). A `WeatherProvider` interface with two implementations: `MockWeatherProvider` (wraps the existing seeded generators — default, deterministic) and `OpenMeteoWeatherProvider` (real calls to the free, key-less [Open-Meteo](https://open-meteo.com) daily forecast API). `getWeatherProvider()` selects via `WEATHER_PROVIDER` (`mock` | `live`, default `mock`). The `/weather` Weather Signal Lab has a **Demo Data / Live Weather** toggle: selecting Live fetches real forecasts for the chosen DMA's lat/lon through a server-side route handler (`app/api/weather/[dmaId]`) and feeds them through the **same** modeling functions (Indoor / Trigger / Friction / anomaly), so the indices update from real data. Loading/error states fall back to the demo forecast.
+- **CSV ingestion + validation** (`lib/ingest/`). A dependency-free RFC-4180-ish CSV parser (`parseCsv.ts`) and real per-type schema validation (`schema.ts`) for all six sources: required-column checks, type parsing (dates/numbers/enums/bools), DMA-name resolution (exact + fuzzy via Levenshtein), missing-value counts per column, date range, and a structured `IngestResult` of errors/warnings. The `/data` page renders these real data-quality results for both uploads and the demo dataset.
+- **Session data spine** (`lib/store/dataSpineContext.tsx`). Uploading a valid sales CSV stores the validated rows in a React context persisted to `localStorage`. The `/mmm` MMM Decomposition page consumes it via `useDataSpine()` — it shows "Using uploaded client data (N rows)" and recomputes its top-line revenue / baseline / weather-vs-media split from the uploaded rows, falling back to mock data otherwise.
+- **Hill-curve calibration** (`lib/modeling/calibration.ts`). `calibrateHillCurve()` fits half-saturation, slope, and response asymptote to historical `(spend, conversions)` pairs via coarse grid-search + local coordinate descent (closed-form least-squares scale per candidate, scored by R²). The `/optimizer` Budget Optimizer has a **"Calibrate from historical spend"** toggle that fits a curve per channel from the media history and uses the calibrated parameters instead of the hardcoded defaults, displaying half-sat / slope / R² per channel. Unit tests in `lib/modeling/calibration.test.ts` verify parameter recovery on synthetic data.
+
+### Still simulated / out of V2 scope
+
+- **Air quality** is a deterministic proxy from each DMA's climate risk — the free Open-Meteo daily endpoint has no AQI; a real build would call an AQ API (Open-Meteo Air Quality / OpenWeather AQ / AirNow), most of which need a key. Flagged in `lib/weather/openMeteoProvider.ts`.
+- **Severe-weather flag** under live weather is a precipitation/snow-threshold proxy (no severe field in the daily endpoint).
+- **DMA lat/lon** are approximate metro coordinates from a lookup table.
+- **Data spine consumption** is wired into one page (`/mmm`) to prove the flow end-to-end; the other routes still read mock data. The baseline/media split from uploaded data is a transparent heuristic (a true joint estimate is V3).
+- **V3/V4** (Bayesian hierarchical MMM, causal/structural model, automated experiments, platform activation) remain future work.
+
+> **Env:** set `WEATHER_PROVIDER=live` to make server-rendered weather use Open-Meteo (no key needed); see `.env.example`. The `/weather` Live toggle works regardless of this var.
 
 ## Run Locally
 

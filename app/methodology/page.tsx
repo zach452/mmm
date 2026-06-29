@@ -74,13 +74,26 @@ export default function MethodologyPage() {
       <SectionCard title="MVP → V4 Roadmap" subtitle="From interpretable heuristics to a production causal engine">
         <div className="grid gap-3 md:grid-cols-4">
           {[
-            { v: 'MVP (now)', d: 'Deterministic heuristic models, synthetic data, full decisioning UI and experiment design.' },
-            { v: 'V2', d: 'Live weather API + real client data spine; calibrated Hill curves from historical spend.' },
-            { v: 'V3', d: 'Bayesian hierarchical MMM service with partial pooling and credible intervals; experiment feedback loop.' },
-            { v: 'V4', d: 'Causal/structural model, automated geo experiments, and platform activation integrations with guardrails.' },
+            { v: 'MVP', d: 'Deterministic heuristic models, synthetic data, full decisioning UI and experiment design.', status: 'done' as const },
+            { v: 'V2', d: 'Live Open-Meteo weather (Weather Signal Lab toggle), real CSV ingestion + validation driving a session data spine (consumed by MMM Decomposition), and Hill curves calibrated from historical spend (Budget Optimizer). Air quality remains a proxy; data-spine consumption is wired into one page so far.', status: 'live' as const },
+            { v: 'V3', d: 'Bayesian hierarchical MMM service with partial pooling and credible intervals; experiment feedback loop.', status: 'future' as const },
+            { v: 'V4', d: 'Causal/structural model, automated geo experiments, and platform activation integrations with guardrails.', status: 'future' as const },
           ].map((r) => (
             <div key={r.v} className="card p-4">
-              <div className="text-sm font-semibold text-[var(--accent)]">{r.v}</div>
+              <div className="flex items-center gap-2">
+                <div className="text-sm font-semibold text-[var(--accent)]">{r.v}</div>
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                    r.status === 'live'
+                      ? 'bg-[var(--positive)]/15 text-[var(--positive)]'
+                      : r.status === 'done'
+                        ? 'bg-[var(--surface-2)] text-muted'
+                        : 'border text-muted'
+                  }`}
+                >
+                  {r.status === 'live' ? '● Now live' : r.status === 'done' ? 'Shipped' : 'Planned'}
+                </span>
+              </div>
               <p className="mt-1.5 text-xs leading-relaxed text-muted">{r.d}</p>
             </div>
           ))}

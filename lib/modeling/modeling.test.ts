@@ -129,7 +129,7 @@ describe('optimizer and matching', () => {
 
 function makeDma(id = 'DMA-001', region: DMA['region'] = 'West', population = 2_000_000, baselineIndex = 100, baseTempC = 17): DMA {
   return {
-    id, name: id, region, population, baselineIndex,
+    id, name: id, region, population, baselineIndex, lat: 40, lon: -100,
     climate: { baseTempC, seasonalAmplitude: 10, basePrecip: 2, snowProne: false, uvProne: true, airQualityRisk: 0.3 },
   };
 }

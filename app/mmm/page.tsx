@@ -3,6 +3,7 @@ import { generateDMAs, PRODUCT_CATEGORIES, CHANNELS } from '@/lib/mockData';
 import { SectionCard, fmtCurrency } from '@/components/ui';
 import { DecompositionChart, ObservedVsModeledChart } from '@/components/charts';
 import { DecompositionResult, ProductCategory } from '@/lib/types';
+import MmmDataSpineSummary from '@/components/MmmDataSpineSummary';
 
 export default function MMMPage() {
   const snaps = getDMASnapshots();
@@ -88,8 +89,17 @@ export default function MMMPage() {
 
   void dmas;
 
+  const mmmFallback = {
+    totalRevenue: totals.observed,
+    baseline: totals.baseline,
+    weatherDriven,
+    mediaCaused,
+  };
+
   return (
     <div className="space-y-6">
+      <MmmDataSpineSummary fallback={mmmFallback} />
+
       <SectionCard title="Revenue Decomposition Over Time" subtitle="Stacked contribution across the modeled portfolio (top markets)">
         <DecompositionChart data={series} />
       </SectionCard>

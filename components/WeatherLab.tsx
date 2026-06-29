@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ProductCategory, WeatherForecast, WeatherRegime } from '@/lib/types';
 import {
   calculateCategoryTriggerIndex,
@@ -29,8 +29,48 @@ export default function WeatherLab({ dmas }: { dmas: WeatherLabDMA[] }) {
   const [window, setWindow] = useState<3 | 7 | 14>(7);
   const [overrideRegime, setOverrideRegime] = useState<WeatherRegime | 'Forecast'>('Forecast');
 
+  const [source, setSource] = useState<'demo' | 'live'>('demo');
+  const [liveForecast, setLiveForecast] = useState<WeatherForecast[] | null>(null);
+  const [liveStatus, setLiveStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
+  const [liveError, setLiveError] = useState<string | null>(null);
+
   const dma = dmas.find((d) => d.id === dmaId)!;
-  const horizon = dma.forecast.slice(0, window);
+
+  // Fetch real weather from the server-side Route Handler when "Live Weather" is
+  // selected. Falls back to the embedded demo forecast on failure.
+  useEffect(() => {
+    if (source !== 'live') return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing UI to an external fetch lifecycle
+    setLiveStatus('loading');
+    setLiveError(null);
+    fetch(`/api/weather/${dmaId}?days=14`)
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || body.error || `HTTP ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data: { forecast: WeatherForecast[] }) => {
+        if (cancelled) return;
+        setLiveForecast(data.forecast);
+        setLiveStatus('ok');
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setLiveForecast(null);
+        setLiveError(err.message);
+        setLiveStatus('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [source, dmaId]);
+
+  const activeForecast =
+    source === 'live' && liveForecast ? liveForecast : dma.forecast;
+  const horizon = activeForecast.slice(0, window);
 
   const signals = useMemo(() => {
     return horizon.map((f) => {
@@ -64,6 +104,33 @@ export default function WeatherLab({ dmas }: { dmas: WeatherLabDMA[] }) {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-1 rounded-md border bg-[var(--surface-2)] p-0.5">
+          {(['demo', 'live'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setSource(s)}
+              className={`rounded px-3 py-1.5 text-xs font-medium ${source === s ? 'bg-[var(--accent)] text-black' : 'text-muted'}`}
+            >
+              {s === 'demo' ? 'Demo Data' : 'Live Weather'}
+            </button>
+          ))}
+        </div>
+        {source === 'live' && (
+          <span className="text-xs">
+            {liveStatus === 'loading' && <Pill>Fetching Open-Meteo…</Pill>}
+            {liveStatus === 'ok' && (
+              <Pill>● Live · Open-Meteo · {dma.name}</Pill>
+            )}
+            {liveStatus === 'error' && (
+              <span className="text-[var(--negative)]">
+                Live fetch failed ({liveError}) — showing demo forecast as fallback.
+              </span>
+            )}
+          </span>
+        )}
+        {source === 'demo' && <Pill>Seeded demo forecast</Pill>}
+      </div>
       <div className="flex flex-wrap items-end gap-3">
         <Field label="DMA">
           <select value={dmaId} onChange={(e) => setDmaId(e.target.value)} className="sel">

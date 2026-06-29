@@ -57,6 +57,8 @@ export interface DMA {
   population: number;
   baselineIndex: number; // relative demand index (~100 baseline)
   climate: ClimateProfile;
+  lat: number; // approximate metro latitude (for live weather API lookup)
+  lon: number; // approximate metro longitude
 }
 
 export interface WeatherObservation {

@@ -9,7 +9,22 @@ import { BarCompareChart } from './charts';
 const CHANNELS: Channel[] = ['Meta', 'Google Search', 'TikTok', 'YouTube', 'CTV', 'Pinterest', 'Amazon/RMN'];
 const REGIONS: Region[] = ['Northeast', 'Midwest', 'South', 'West', 'Pacific Northwest', 'Southwest'];
 
-export default function Optimizer({ opportunities }: { opportunities: OptimizerOpportunity[] }) {
+export interface ChannelCalibration {
+  channel: Channel;
+  halfSaturation: number;
+  slope: number;
+  r2: number;
+  n: number;
+}
+
+export default function Optimizer({
+  opportunities,
+  calibration,
+}: {
+  opportunities: OptimizerOpportunity[];
+  calibration?: Record<string, ChannelCalibration>;
+}) {
+  const [useCalibrated, setUseCalibrated] = useState(false);
   const [budget, setBudget] = useState(250000);
   const [maxShiftChannel, setMaxShiftChannel] = useState(0.4);
   const [riskTolerance, setRiskTolerance] = useState<'Conservative' | 'Balanced' | 'Aggressive'>('Balanced');
@@ -23,14 +38,19 @@ export default function Optimizer({ opportunities }: { opportunities: OptimizerO
     const riskMult = riskTolerance === 'Conservative' ? 0.6 : riskTolerance === 'Aggressive' ? 1.4 : 1;
     const filtered = opportunities
       .filter((o) => !excludedChannels.has(o.channel) && !excludedRegions.has(o.region as Region))
-      .map((o) => ({
-        ...o,
-        maxSpend: o.currentSpend * (1 + maxShiftChannel * riskMult),
-        minSpend: o.currentSpend * (1 - maxShiftChannel * 0.5),
-      }));
+      .map((o) => {
+        const cal = useCalibrated ? calibration?.[o.channel] : undefined;
+        return {
+          ...o,
+          halfSaturation: cal ? cal.halfSaturation : o.halfSaturation,
+          slope: cal ? cal.slope : o.slope,
+          maxSpend: o.currentSpend * (1 + maxShiftChannel * riskMult),
+          minSpend: o.currentSpend * (1 - maxShiftChannel * 0.5),
+        };
+      });
     const rows = optimizeBudget(budget, filtered, {});
     return rows.sort((a, b) => b.delta - a.delta);
-  }, [opportunities, budget, maxShiftChannel, riskTolerance, excludedChannels, excludedRegions]);
+  }, [opportunities, budget, maxShiftChannel, riskTolerance, excludedChannels, excludedRegions, useCalibrated, calibration]);
 
   void priorityKpi; void inventoryConstraint; void creativeReady;
 
@@ -60,6 +80,50 @@ export default function Optimizer({ opportunities }: { opportunities: OptimizerO
         </div>
         <style>{`.sel{background:var(--surface-2);border:1px solid var(--border);border-radius:0.375rem;padding:0.375rem 0.5rem;font-size:0.75rem;color:var(--foreground);outline:none;width:100%}`}</style>
       </SectionCard>
+
+      {calibration && (
+        <SectionCard
+          title="Hill Curve Calibration"
+          subtitle="Fit half-saturation & slope per channel from historical spend → conversions (Open-source curve fit; see lib/modeling/calibration.ts)"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={useCalibrated}
+                onChange={(e) => setUseCalibrated(e.target.checked)}
+                className="accent-[var(--accent)]"
+              />
+              Calibrate from historical spend
+              {useCalibrated ? <Pill>calibrated params active</Pill> : <span className="text-xs text-muted">(using default half-sat ×1.1, slope 1.3)</span>}
+            </label>
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs uppercase tracking-wide text-muted">
+                  <th className="px-3 py-2">Channel</th>
+                  <th className="px-3 py-2 text-right">Half-saturation</th>
+                  <th className="px-3 py-2 text-right">Slope</th>
+                  <th className="px-3 py-2 text-right">R²</th>
+                  <th className="px-3 py-2 text-right">Obs.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.values(calibration).map((c) => (
+                  <tr key={c.channel} className={`border-b ${useCalibrated ? '' : 'opacity-60'}`}>
+                    <td className="px-3 py-2">{c.channel}</td>
+                    <td className="px-3 py-2 text-right tabular">{fmtCurrency(c.halfSaturation)}</td>
+                    <td className="px-3 py-2 text-right tabular">{c.slope.toFixed(2)}</td>
+                    <td className={`px-3 py-2 text-right tabular ${c.r2 >= 0.6 ? 'text-[var(--positive)]' : 'text-[var(--warning)]'}`}>{c.r2.toFixed(3)}</td>
+                    <td className="px-3 py-2 text-right tabular">{c.n.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
+      )}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Current spend" value={fmtCurrency(totalCurrent)} />

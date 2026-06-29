@@ -1,12 +1,41 @@
 import { getDMASnapshots } from '@/lib/derive';
 import { estimateWeatherMediaInteraction, OptimizerOpportunity } from '@/lib/modeling';
-import Optimizer from '@/components/Optimizer';
+import { calibrateHillCurve } from '@/lib/modeling/calibration';
+import { generateDMAs, generateMedia } from '@/lib/mockData';
+import Optimizer, { ChannelCalibration } from '@/components/Optimizer';
 import { Channel } from '@/lib/types';
 
 const OPT_CHANNELS: Channel[] = ['Meta', 'Google Search', 'TikTok', 'Amazon/RMN', 'CTV'];
 
+// Calibrate a Hill curve per channel from the historical media spend → conversions
+// (the mock media observations). Runs server-side; results are shown in the UI and
+// can be applied to the optimizer instead of the hardcoded defaults.
+function calibrateChannels(): Record<string, ChannelCalibration> {
+  const media = generateMedia(generateDMAs());
+  const byChannel = new Map<Channel, { spend: number; conversions: number }[]>();
+  for (const m of media) {
+    const arr = byChannel.get(m.channel) ?? [];
+    arr.push({ spend: m.spend, conversions: m.conversions });
+    byChannel.set(m.channel, arr);
+  }
+  const out: Record<string, ChannelCalibration> = {};
+  for (const channel of OPT_CHANNELS) {
+    const obs = byChannel.get(channel) ?? [];
+    const fit = calibrateHillCurve(obs);
+    out[channel] = {
+      channel,
+      halfSaturation: fit.halfSaturation,
+      slope: fit.slope,
+      r2: fit.r2,
+      n: fit.n,
+    };
+  }
+  return out;
+}
+
 export default function OptimizerPage() {
   const snaps = getDMASnapshots();
+  const calibration = calibrateChannels();
   // Build opportunities: take top ~30 DMAs by opportunity, expand across channels.
   const top = [...snaps].sort((a, b) => b.recommendation.opportunityScore - a.recommendation.opportunityScore).slice(0, 30);
   const opportunities: OptimizerOpportunity[] = [];
@@ -30,5 +59,5 @@ export default function OptimizerPage() {
       });
     }
   }
-  return <Optimizer opportunities={opportunities} />;
+  return <Optimizer opportunities={opportunities} calibration={calibration} />;
 }
