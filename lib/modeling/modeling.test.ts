@@ -32,14 +32,14 @@ describe('weather indices', () => {
     expect(harsh).toBeLessThanOrEqual(100);
   });
 
-  it('category trigger reflects regime relevance', () => {
-    const outerCold = calculateCategoryTriggerIndex('Outerwear', 'Cold Snap', { tempAnomaly: -10 });
-    const outerHeat = calculateCategoryTriggerIndex('Outerwear', 'Heat Wave', { tempAnomaly: 10 });
-    expect(outerCold).toBeGreaterThan(outerHeat);
+  it('service trigger reflects regime relevance', () => {
+    const synthCold = calculateCategoryTriggerIndex('Synthetic Oil Change', 'Cold Snap', { tempAnomaly: -10 });
+    const synthHeat = calculateCategoryTriggerIndex('Synthetic Oil Change', 'Heat Wave', { tempAnomaly: 10 });
+    expect(synthCold).toBeGreaterThan(synthHeat);
   });
 
   it('friction index increases with snow/severe', () => {
-    const f = calculateWeatherFrictionIndex({ precipitation: 0, snow: 8, severe: true, inventoryHealthy: false });
+    const f = calculateWeatherFrictionIndex({ precipitation: 0, snow: 8, severe: true, capacityHealthy: false });
     expect(f).toBeGreaterThan(50);
     expect(f).toBeLessThanOrEqual(100);
   });
@@ -82,23 +82,23 @@ describe('media response', () => {
 
 describe('decomposition and recommendation', () => {
   it('decomposition components sum to observed', () => {
-    const d = decomposeRevenue({ baseline: 10000, triggerIndex: 70, mediaIncrementality: 3000, interactionMultiplier: 1.2, promoActive: true, promoDiscount: 0.2, inventoryHealthy: true, seed: 5 });
-    const sum = d.baseline + d.weatherLift + d.mediaLift + d.interactionLift + d.promoLift + d.inventoryEffect + d.seasonality + d.noise;
+    const d = decomposeRevenue({ baseline: 10000, triggerIndex: 70, mediaIncrementality: 3000, interactionMultiplier: 1.2, promoActive: true, promoDiscount: 0.2, capacityHealthy: true, seed: 5 });
+    const sum = d.baseline + d.weatherLift + d.mediaLift + d.interactionLift + d.promoLift + d.capacityEffect + d.seasonality + d.noise;
     expect(sum).toBe(d.observed);
   });
 
   it('recommendation returns Ignore when lift is mostly weather and mROAS low', () => {
     const dma: DMA = makeDma();
-    const d = decomposeRevenue({ baseline: 10000, triggerIndex: 95, mediaIncrementality: 200, interactionMultiplier: 1.0, promoActive: false, promoDiscount: 0, inventoryHealthy: true, seed: 1 });
-    const rec = generateRecommendation({ dma, category: 'Hydration', regime: 'Heat Wave', decomposition: d, marginalRoas: 0.8, confidence: 0.7, inventoryHealthy: true, creativeReady: true, topChannel: 'Meta', funnelFocus: 'MOF' });
+    const d = decomposeRevenue({ baseline: 10000, triggerIndex: 95, mediaIncrementality: 200, interactionMultiplier: 1.0, promoActive: false, promoDiscount: 0, capacityHealthy: true, seed: 1 });
+    const rec = generateRecommendation({ dma, serviceLine: 'Cooling System', regime: 'Heat Wave', decomposition: d, marginalRoas: 0.8, confidence: 0.7, capacityHealthy: true, creativeReady: true, topChannel: 'Meta', funnelFocus: 'MOF' });
     expect(['Ignore', 'Monitor']).toContain(rec.action);
     expect(rec.weatherShare).toBeGreaterThan(0.5);
   });
 
-  it('recommendation returns Suppress when inventory is broken', () => {
+  it('recommendation returns Suppress when capacity is maxed', () => {
     const dma = makeDma();
-    const d = decomposeRevenue({ baseline: 10000, triggerIndex: 60, mediaIncrementality: 3000, interactionMultiplier: 1.2, promoActive: false, promoDiscount: 0, inventoryHealthy: false, seed: 2 });
-    const rec = generateRecommendation({ dma, category: 'Outerwear', regime: 'Cold Snap', decomposition: d, marginalRoas: 2.5, confidence: 0.8, inventoryHealthy: false, creativeReady: true, topChannel: 'Google Search', funnelFocus: 'BOF' });
+    const d = decomposeRevenue({ baseline: 10000, triggerIndex: 60, mediaIncrementality: 3000, interactionMultiplier: 1.2, promoActive: false, promoDiscount: 0, capacityHealthy: false, seed: 2 });
+    const rec = generateRecommendation({ dma, serviceLine: 'Synthetic Oil Change', regime: 'Cold Snap', decomposition: d, marginalRoas: 2.5, confidence: 0.8, capacityHealthy: false, creativeReady: true, topChannel: 'Google Search', funnelFocus: 'BOF' });
     expect(rec.action).toBe('Suppress');
   });
 });
@@ -130,6 +130,7 @@ describe('optimizer and matching', () => {
 function makeDma(id = 'DMA-001', region: DMA['region'] = 'West', population = 2_000_000, baselineIndex = 100, baseTempC = 17): DMA {
   return {
     id, name: id, region, population, baselineIndex, lat: 40, lon: -100,
+    locationCount: 12, locationDensity: 'Medium',
     climate: { baseTempC, seasonalAmplitude: 10, basePrecip: 2, snowProne: false, uvProne: true, airQualityRisk: 0.3 },
   };
 }

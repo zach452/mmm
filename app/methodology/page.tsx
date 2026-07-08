@@ -12,12 +12,12 @@ function MethodologySection({ title, children }: { title: string; children: Reac
 export default function MethodologyPage() {
   return (
     <div className="space-y-6">
-      <SectionCard title="How the Geo Demand Engine Works" subtitle="A weather-responsive geo MMM and budget-decisioning framework">
+      <SectionCard title="How the Geo Demand Engine Works" subtitle="A weather-responsive geo MMM and budget-decisioning framework for a quick-lube auto-services chain">
         <p className="text-sm leading-relaxed text-muted">
-          The Geo Demand Engine separates demand that <strong className="text-foreground">would have happened anyway</strong>{' '}
-          (driven by weather and seasonality) from demand that <strong className="text-foreground">media actually caused</strong>,
-          then allocates budget to the markets, channels, and moments where incremental dollars do the most work. Below is the
-          full methodology, written for a client audience.
+          The Geo Demand Engine separates service demand that <strong className="text-foreground">would have happened anyway</strong>{' '}
+          (driven by weather and seasonal maintenance cycles) from demand that <strong className="text-foreground">media actually caused</strong>,
+          then allocates budget to the markets, channels, and moments where incremental dollars do the most work — while
+          respecting each DMA&apos;s physical service-bay capacity. Below is the full methodology, written for a client audience.
         </p>
         <p className="mt-2 rounded-lg border border-dashed p-3 text-xs text-muted">
           Note: this MVP uses transparent, deterministic heuristic models in place of a future production Bayesian/causal MMM.
@@ -28,28 +28,28 @@ export default function MethodologyPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <MethodologySection title="1. Weather as an External Demand Shock">
-          <p>Weather moves category demand independently of marketing. A cold snap pulls forward outerwear; a heat wave spikes hydration; rainy weekends lift at-home beauty. We model this as a baseline shift so paid media is never credited for organic, weather-driven demand.</p>
+          <p>Weather moves service demand independently of marketing — and the causal links are unusually clean. <strong className="text-foreground">Cold kills batteries deterministically</strong>: below freezing, a marginal battery simply fails, so a cold snap produces a near-mechanical spike in Battery/Electrical and Synthetic Oil Change demand. Heat overwhelms cooling systems; rain drives wiper-blade replacement. We model this as a baseline shift so paid media is never credited for organic, weather-driven visits.</p>
         </MethodologySection>
         <MethodologySection title="2. Weather as a Media-Effect Modifier">
-          <p>Beyond shifting baseline demand, weather changes how efficiently media converts. When a category is highly relevant, the same impression converts better. We capture this with a weather × media interaction multiplier (~0.7–1.6) that is regime-, channel-, and funnel-aware.</p>
+          <p>Beyond shifting baseline demand, weather changes how efficiently media converts. When a service line is highly relevant, the same impression converts better — and for auto services, Google Search sees the biggest lift during the First Cold Snap window as drivers actively search &quot;oil change near me.&quot; We capture this with a weather × media interaction multiplier (~0.7–1.6) that is regime-, channel-, and funnel-aware.</p>
         </MethodologySection>
         <MethodologySection title="3. The Data Spine">
-          <p>A normalized panel keyed on DMA × day × product × channel joins sales, media, promo, inventory, creative, and weather. This single source of truth lets the model attribute every dollar of revenue to a cause and every market to an opportunity tier.</p>
+          <p>A normalized panel keyed on DMA × day × location × service line × channel joins transactions, media, promo, capacity, creative, and weather. For a franchised chain this is the hard part — franchisee POS fragmentation and national-vs-local co-op spend must be reconciled first (see the Data Spine page). This single source of truth lets the model attribute every dollar of revenue to a cause and every market to an opportunity tier.</p>
         </MethodologySection>
         <MethodologySection title="4. Weather Feature Engineering">
-          <p>Raw observations become decision-grade signals: temperature anomalies vs market norm, an Indoor Behavior Index, a per-category Trigger Index, and a Weather Friction Index. Discrete regimes (Cold Snap, Heat Wave, Poor Air Quality, First Warm Weekend, etc.) are derived from thresholds on these features.</p>
+          <p>Raw observations become decision-grade signals: temperature anomalies vs market norm, an Indoor/Visit-Friction Index, a per-service-line Trigger Index, and a Weather Friction Index. Discrete regimes (First Cold Snap, Cold Snap, Heat Wave, Snow Event, First Warm Weekend, etc.) are derived from thresholds on these features.</p>
         </MethodologySection>
         <MethodologySection title="5. Baseline Demand Model">
-          <p>Baseline demand is estimated per DMA × category from population, a market baseline index, and seasonality. This is the counterfactual: what sells with zero incremental media. <em>Future:</em> a hierarchical Bayesian baseline with partial pooling across DMAs.</p>
+          <p>Baseline demand is estimated per DMA × service line from population, a market baseline index, location count, maintenance seasonality (winter-prep Oct–Nov and spring Mar–Apr run hot), and day-of-week (weekends are busier for oil changes). This is the counterfactual: visits with zero incremental media. <em>Future:</em> a hierarchical Bayesian baseline with partial pooling across DMAs.</p>
         </MethodologySection>
         <MethodologySection title="6. Media Response Curves">
-          <p>Each channel follows a Hill saturation curve: response = xˢ / (xˢ + halfˢ). Early spend is efficient; deep spend saturates. Curves are visualized on the Geo and Optimizer pages with the current spend point marked.</p>
+          <p>Each channel follows a Hill saturation curve: response = xˢ / (xˢ + halfˢ). Early spend is efficient; deep spend saturates. Search saturates fast in small DMAs (limited local search volume); Direct Mail behaves step-function-like (below a minimum drop size its impact is near zero). Curves are visualized on the Geo and Optimizer pages with the current spend point marked.</p>
         </MethodologySection>
         <MethodologySection title="7. Weather × Media Interaction Effects">
-          <p>The interaction multiplier amplifies or dampens media response based on regime and category relevance. Severe storms suppress efficiency (fulfillment friction); high-relevance windows amplify it, especially for BOF/Search.</p>
+          <p>The interaction multiplier amplifies or dampens media response based on regime and service relevance. Severe storms suppress efficiency (nobody drives in); high-relevance windows amplify it, especially for BOF/Search. Brand channels (CTV/Programmatic) work hardest during Normal conditions when there is no urgency trigger.</p>
         </MethodologySection>
         <MethodologySection title="8. Lag & Adstock Modeling">
-          <p>Media effects persist. We apply channel-specific geometric adstock (CTV/YouTube decay slowly; Search decays fast) so the model credits delayed conversions to the impressions that drove them.</p>
+          <p>Media effects persist. We apply channel-specific geometric adstock (CTV decays slowly as brand awareness; Direct Mail has a long tail — coupons sit on the fridge; Search decays fast — intent is immediate) so the model credits delayed bookings to the impressions that drove them.</p>
         </MethodologySection>
         <MethodologySection title="9. Hierarchical Geo Logic">
           <p>DMAs are scored individually but interpreted within region and climate cohorts. This supports matched-market experiments and partial pooling, so thin-data markets borrow strength from similar ones.</p>
@@ -77,7 +77,7 @@ export default function MethodologyPage() {
             { v: 'MVP', d: 'Deterministic heuristic models, synthetic data, full decisioning UI and experiment design.', status: 'done' as const },
             { v: 'V2', d: 'Live Open-Meteo weather (Weather Signal Lab toggle), real CSV ingestion + validation driving a session data spine (consumed by MMM Decomposition), and Hill curves calibrated from historical spend (Budget Optimizer). Air quality remains a proxy; data-spine consumption is wired into one page so far.', status: 'live' as const },
             { v: 'V3', d: 'Now live (core algorithms): empirical-Bayes hierarchical partial pooling shrinks noisy/small-sample DMA incrementality toward the cross-DMA mean (Geo drawer), real nonparametric bootstrap credible intervals wrap point estimates, and an experiment feedback loop (Experiments) updates a recommendation from a geo-test readout — confirming raises confidence, contradicting flips toward Suppress. Still aspirational: full MCMC/Stan/PyMC NUTS posterior sampling replacing the empirical-Bayes approximation.', status: 'live' as const },
-            { v: 'V4', d: 'Now live (core algorithms): a hand-rolled synthetic-control estimator (projected-gradient simplex weights) computes causal counterfactual lift on real mock sales (Geo drawer), automated multi-cluster geo experiment design generates a ranked, non-overlapping treatment/control slate (Experiments), and guardrailed stub activation connectors (Optimizer) check inventory / creative / marginal-ROAS CI / step-size before a simulated push to Meta/Google with a simulated Slack alert. Still aspirational: real OAuth platform integrations and real Slack/email delivery — these need production credentials in V5.', status: 'live' as const },
+            { v: 'V4', d: 'Now live (core algorithms): a hand-rolled synthetic-control estimator (projected-gradient simplex weights) computes causal counterfactual lift on real mock sales (Geo drawer), automated multi-cluster geo experiment design generates a ranked, non-overlapping treatment/control slate (Experiments), and guardrailed stub activation connectors (Optimizer) check DMA capacity / creative / marginal-ROAS CI / step-size before a simulated push to Meta/Google with a simulated Slack alert. Still aspirational: real OAuth platform integrations and real Slack/email delivery — these need production credentials in V5.', status: 'live' as const },
           ].map((r) => (
             <div key={r.v} className="card p-4">
               <div className="flex items-center gap-2">

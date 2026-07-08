@@ -7,19 +7,19 @@
  * to decide whether to compute from uploaded client data or fall back to mock.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { SalesObservation } from '../types';
+import { ServiceObservation } from '../types';
 
 const STORAGE_KEY = 'gde.dataSpine.sales.v1';
 
 export interface DataSpineState {
-  sales: SalesObservation[] | null;
+  sales: ServiceObservation[] | null;
   fileName: string | null;
   uploadedAt: string | null;
 }
 
 interface DataSpineContextValue extends DataSpineState {
   hasSales: boolean;
-  setSales: (rows: SalesObservation[], fileName: string) => void;
+  setSales: (rows: ServiceObservation[], fileName: string) => void;
   clear: () => void;
 }
 
@@ -43,7 +43,7 @@ export function DataSpineProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const setSales = useCallback((rows: SalesObservation[], fileName: string) => {
+  const setSales = useCallback((rows: ServiceObservation[], fileName: string) => {
     const next: DataSpineState = {
       sales: rows,
       fileName,

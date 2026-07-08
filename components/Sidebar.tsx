@@ -83,7 +83,7 @@ function Brand() {
       <div className="leading-tight">
         <div className="text-sm font-semibold">Geo Demand Engine</div>
         <div className="text-[10px] uppercase tracking-wider text-muted">
-          Weather-Responsive MMM
+          Quick-Lube Weather MMM
         </div>
       </div>
     </div>

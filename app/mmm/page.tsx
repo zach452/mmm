@@ -1,8 +1,8 @@
 import { getDecompositionSeries, getDMASnapshots } from '@/lib/derive';
-import { generateDMAs, PRODUCT_CATEGORIES, CHANNELS } from '@/lib/mockData';
+import { generateDMAs, SERVICE_LINES, CHANNELS } from '@/lib/mockData';
 import { SectionCard, fmtCurrency } from '@/components/ui';
 import { DecompositionChart, ObservedVsModeledChart } from '@/components/charts';
-import { DecompositionResult, ProductCategory } from '@/lib/types';
+import { DecompositionResult, ServiceLine } from '@/lib/types';
 import MmmDataSpineSummary from '@/components/MmmDataSpineSummary';
 
 export default function MMMPage() {
@@ -13,7 +13,7 @@ export default function MMMPage() {
   const lead = [...snaps].sort((a, b) => b.dma.population - a.dma.population).slice(0, 6);
   const seriesByDate = new Map<string, DecompositionResult & { date: string }>();
   for (const s of lead) {
-    const ser = getDecompositionSeries(s.dma, s.primaryCategory, 60);
+    const ser = getDecompositionSeries(s.dma, s.primaryServiceLine, 60);
     for (const row of ser) {
       const cur = seriesByDate.get(row.date);
       if (!cur) {
@@ -24,7 +24,7 @@ export default function MMMPage() {
         cur.mediaLift += row.mediaLift;
         cur.interactionLift += row.interactionLift;
         cur.promoLift += row.promoLift;
-        cur.inventoryEffect += row.inventoryEffect;
+        cur.capacityEffect += row.capacityEffect;
         cur.seasonality += row.seasonality;
         cur.noise += row.noise;
         cur.observed += row.observed;
@@ -34,7 +34,7 @@ export default function MMMPage() {
   const series = Array.from(seriesByDate.values()).sort((a, b) => a.date.localeCompare(b.date));
 
   const observedSeries = series.map((s) => {
-    const modeled = s.baseline + s.weatherLift + s.mediaLift + s.interactionLift + s.promoLift + s.seasonality + s.inventoryEffect;
+    const modeled = s.baseline + s.weatherLift + s.mediaLift + s.interactionLift + s.promoLift + s.seasonality + s.capacityEffect;
     return {
       date: s.date,
       observed: s.observed,
@@ -77,14 +77,14 @@ export default function MMMPage() {
     .sort((a, b) => b.decomposition.mediaLift - a.decomposition.mediaLift)
     .slice(0, 8);
 
-  // Contribution by category
-  const byCat = new Map<ProductCategory, number>();
+  // Contribution by service line
+  const byCat = new Map<ServiceLine, number>();
   for (const s of snaps) {
     for (const r of s.recommendations) {
-      byCat.set(r.product_category, (byCat.get(r.product_category) ?? 0) + r.expectedRevenueLift);
+      byCat.set(r.service_line, (byCat.get(r.service_line) ?? 0) + r.expectedRevenueLift);
     }
   }
-  const catRows = PRODUCT_CATEGORIES.map((c) => [c, byCat.get(c) ?? 0] as const).sort((a, b) => b[1] - a[1]);
+  const catRows = SERVICE_LINES.map((c) => [c, byCat.get(c) ?? 0] as const).sort((a, b) => b[1] - a[1]);
   const catTotal = catRows.reduce((s, [, v]) => s + v, 0) || 1;
 
   void dmas;
@@ -111,26 +111,27 @@ export default function MMMPage() {
       <SectionCard title="Decomposition Narrative" subtitle="Dynamically generated from the computed mix">
         <div className="space-y-3 text-sm leading-relaxed text-muted">
           <p>
-            Over the modeled window, total revenue was{' '}
+            Over the modeled window, total estimated service revenue was{' '}
             <strong className="text-foreground">{fmtCurrency(totals.observed)}</strong>, of which a baseline of{' '}
             <strong className="text-foreground">{fmtCurrency(totals.baseline)}</strong> (
-            {Math.round((totals.baseline / totals.observed) * 100)}%) would have occurred regardless of marketing.
+            {Math.round((totals.baseline / totals.observed) * 100)}%) reflects routine maintenance visits that would have
+            occurred regardless of marketing.
           </p>
           <p>
             Of the incremental demand, an estimated{' '}
             <strong className="text-[var(--accent)]">{fmtCurrency(weatherDriven)}</strong> (
             {Math.round((weatherDriven / incrementalTotal) * 100)}%) is{' '}
-            <strong className="text-foreground">demand that would have happened anyway because of weather</strong> — an
-            external demand shock the brand did not cause. Only{' '}
+            <strong className="text-foreground">weather-driven demand that would have converted regardless of media</strong>{' '}
+            — primarily First Cold Snap-driven Synthetic Oil Change and Battery/Electrical visits in Midwest markets. Only{' '}
             <strong className="text-[var(--positive)]">{fmtCurrency(mediaCaused)}</strong> (
             {Math.round((mediaCaused / incrementalTotal) * 100)}%) is{' '}
-            <strong className="text-foreground">demand media actually caused</strong>, including{' '}
-            {fmtCurrency(totals.interactionLift)} from weather amplifying media efficiency.
+            <strong className="text-foreground">media-driven incrementality</strong>, concentrated in pre-event Search and
+            Direct Mail, including {fmtCurrency(totals.interactionLift)} from weather amplifying media efficiency.
           </p>
           <p className="rounded-lg border border-dashed p-3 text-xs">
             Decisioning implication: crediting paid channels with the full lift would overstate media ROI by roughly{' '}
             {Math.round((weatherDriven / Math.max(1, mediaCaused)) * 100)}%. The optimizer and recommendations net out the
-            weather baseline before allocating budget.
+            weather baseline — and respect DMA capacity ceilings — before allocating budget.
           </p>
         </div>
       </SectionCard>
@@ -139,7 +140,7 @@ export default function MMMPage() {
         <SectionCard title="Contribution by Channel">
           <ContribBars rows={channelRows} total={channelTotal} />
         </SectionCard>
-        <SectionCard title="Contribution by Category">
+        <SectionCard title="Contribution by Service Line">
           <ContribBars rows={catRows as [string, number][]} total={catTotal} />
         </SectionCard>
         <SectionCard title="Top DMAs by Media Lift">

@@ -4,11 +4,11 @@ import {
   getHierarchicalIncrementality,
   getSyntheticControl,
 } from '@/lib/derive';
-import { estimateWeatherMediaInteraction } from '@/lib/modeling';
+import { channelHalfSaturation, estimateWeatherMediaInteraction } from '@/lib/modeling';
 import GeoClient, { GeoRow } from '@/components/GeoClient';
 import { Channel } from '@/lib/types';
 
-const CURVE_CHANNELS: Channel[] = ['Meta', 'Google Search', 'TikTok', 'Amazon/RMN'];
+const CURVE_CHANNELS: Channel[] = ['Google Search', 'Meta', 'CTV', 'Direct Mail'];
 
 export default function GeoPage() {
   const snaps = getDMASnapshots();
@@ -25,14 +25,14 @@ export default function GeoPage() {
       });
       return {
         channel,
-        halfSaturation: baseSpend * 1.1,
+        halfSaturation: channelHalfSaturation(channel, baseSpend),
         maxResponse: baseline * 0.4,
         currentSpend: baseSpend,
         interactionMultiplier: interaction,
       };
     });
     const h = shrunk.get(s.dma.id);
-    const sc = getSyntheticControl(s.dma.id, s.primaryCategory, 60);
+    const sc = getSyntheticControl(s.dma.id, s.primaryServiceLine, 60);
     return {
       rec: s.recommendation,
       temperature: s.latestWeather.temperature,
@@ -40,9 +40,12 @@ export default function GeoPage() {
       indoorIndex: s.indoorIndex,
       triggerIndex: s.triggerIndex,
       decomposition: s.decomposition,
-      decompSeries: getDecompositionSeries(s.dma, s.primaryCategory, 45),
+      decompSeries: getDecompositionSeries(s.dma, s.primaryServiceLine, 45),
       channelCurves,
       population: s.dma.population,
+      locationCount: s.dma.locationCount,
+      locationDensity: s.dma.locationDensity,
+      capacityStatus: s.capacityStatus,
       hierarchical: h
         ? {
             n: h.n,

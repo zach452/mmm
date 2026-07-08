@@ -69,7 +69,8 @@ describe('shrinkDmaIncrementality', () => {
       spend,
       impressions: 10000,
       clicks,
-      conversions: conv,
+      bookings: conv,
+      coupon_impressions: 1500,
     });
     for (let i = 0; i < 120; i++) media.push(mk('BIG', i, 2000, 50, 200));
     for (let i = 0; i < 120; i++) media.push(mk('MID', i, 2000, 50, 200));
@@ -88,7 +89,7 @@ describe('shrinkDmaIncrementality', () => {
 
 describe('applyExperimentReadout (feedback loop)', () => {
   const base: Recommendation = {
-    id: 'r1', dma: 'D1', dmaName: 'City', region: 'West', product_category: 'Hydration',
+    id: 'r1', dma: 'D1', dmaName: 'City', region: 'West', service_line: 'Standard Oil Change',
     regime: 'Heat Wave', action: 'Test', confidence: 0.6, opportunityScore: 60,
     expectedRevenueLift: 5000, expectedMarginImpact: 2000, recommendedBudgetShift: 500,
     marginalRoas: 1.9, weatherShare: 0.4, riskFlags: [], rationale: '', topChannel: 'Meta',

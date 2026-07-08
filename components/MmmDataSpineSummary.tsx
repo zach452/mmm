@@ -8,7 +8,7 @@
  * passed in as fallback props.
  *
  * The baseline/media split here is a transparent heuristic (same spirit as the
- * mock decomposition): baseline is estimated from each category's low-demand
+ * mock decomposition): baseline is estimated from each service line's low-demand
  * quantile, and the remainder above baseline is treated as incremental, which we
  * attribute proportionally to weather vs media using a fixed demo split. A real
  * V3 Bayesian MMM would estimate these jointly — flagged here, not hidden.
@@ -16,18 +16,18 @@
 import { useMemo } from 'react';
 import { useDataSpine } from '@/lib/store/dataSpineContext';
 import { fmtCurrency, SectionCard } from './ui';
-import { SalesObservation } from '@/lib/types';
+import { ServiceObservation } from '@/lib/types';
 
 const WEATHER_SHARE_OF_INCREMENTAL = 0.45; // demo assumption; see header note
 
-function computeFromSales(sales: SalesObservation[]) {
+function computeFromSales(sales: ServiceObservation[]) {
   const totalRevenue = sales.reduce((s, r) => s + r.revenue, 0);
 
-  // Baseline estimate per (dma, category): the 25th-percentile daily revenue is
+  // Baseline estimate per (dma, service line): the 25th-percentile daily revenue is
   // treated as the level that would occur regardless of weather/media.
   const groups = new Map<string, number[]>();
   for (const r of sales) {
-    const key = `${r.dma}|${r.product_category}`;
+    const key = `${r.dma}|${r.service_line}`;
     const arr = groups.get(key) ?? [];
     arr.push(r.revenue);
     groups.set(key, arr);
@@ -70,7 +70,7 @@ export default function MmmDataSpineSummary({ fallback }: { fallback: MmmFallbac
       subtitle={
         usingUpload
           ? `Using uploaded client data (${spine.sales!.length.toLocaleString()} rows · ${spine.fileName})`
-          : 'Computed from synthetic demo data (upload a sales CSV on /data to drive this from real client data)'
+          : 'Computed from synthetic demo data (upload a transactions CSV on /data to drive this from real client data)'
       }
     >
       {usingUpload && (

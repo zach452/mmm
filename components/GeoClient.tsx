@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Action, ProductCategory, Recommendation, Region, WeatherRegime } from '@/lib/types';
+import { Action, CapacityStatus, Recommendation, Region, ServiceLine, WeatherRegime } from '@/lib/types';
 import { ActionBadge, ConfidenceBadge, fmtCurrency, Pill } from './ui';
 import { DecompositionChart, ChannelResponseCurve } from './charts';
 import { DecompositionResult } from '@/lib/types';
@@ -16,6 +16,9 @@ export interface GeoRow {
   decompSeries: (DecompositionResult & { date: string })[];
   channelCurves: { channel: string; halfSaturation: number; maxResponse: number; currentSpend: number; interactionMultiplier: number }[];
   population: number;
+  locationCount: number;
+  locationDensity: 'High' | 'Medium' | 'Low';
+  capacityStatus: CapacityStatus;
   hierarchical: {
     n: number;
     raw: number;
@@ -38,7 +41,17 @@ export interface GeoRow {
 
 const REGIONS: (Region | 'All')[] = ['All', 'Northeast', 'Midwest', 'South', 'West', 'Pacific Northwest', 'Southwest'];
 const ACTIONS: (Action | 'All')[] = ['All', 'Act', 'Test', 'Monitor', 'Ignore', 'Suppress'];
-const CATEGORIES: (ProductCategory | 'All')[] = ['All', 'At-Home Beauty', 'Outerwear', 'Footwear', 'Hydration', 'Baby Care', 'Wellness'];
+const SERVICE_LINES: (ServiceLine | 'All')[] = ['All', 'Standard Oil Change', 'Synthetic Oil Change', 'Tire Services', 'Wiper Blades', 'Battery/Electrical', 'Cooling System', 'Air Filtration'];
+
+const CAPACITY_STYLES: Record<CapacityStatus, string> = {
+  Healthy: 'bg-[var(--positive)]/15 text-[var(--positive)]',
+  Constrained: 'bg-[var(--warning)]/15 text-[var(--warning)]',
+  Maxed: 'bg-[var(--negative)]/15 text-[var(--negative)]',
+};
+
+function CapacityBadge({ status }: { status: CapacityStatus }) {
+  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${CAPACITY_STYLES[status]}`}>{status}</span>;
+}
 
 const REGION_COLORS: Record<Region, string> = {
   Northeast: '#5b8cff',
@@ -55,7 +68,7 @@ export default function GeoClient({ rows }: { rows: GeoRow[] }) {
   const [region, setRegion] = useState<Region | 'All'>('All');
   const [regime, setRegime] = useState<WeatherRegime | 'All'>('All');
   const [action, setAction] = useState<Action | 'All'>('All');
-  const [category, setCategory] = useState<ProductCategory | 'All'>('All');
+  const [serviceLine, setServiceLine] = useState<ServiceLine | 'All'>('All');
   const [sortKey, setSortKey] = useState<SortKey>('opportunity');
   const [selected, setSelected] = useState<GeoRow | null>(null);
 
@@ -70,7 +83,7 @@ export default function GeoClient({ rows }: { rows: GeoRow[] }) {
         (region === 'All' || r.rec.region === region) &&
         (regime === 'All' || r.rec.regime === regime) &&
         (action === 'All' || r.rec.action === action) &&
-        (category === 'All' || r.rec.product_category === category),
+        (serviceLine === 'All' || r.rec.service_line === serviceLine),
     );
     return f.sort((a, b) => {
       switch (sortKey) {
@@ -84,7 +97,7 @@ export default function GeoClient({ rows }: { rows: GeoRow[] }) {
           return b.rec.opportunityScore - a.rec.opportunityScore;
       }
     });
-  }, [rows, region, regime, action, category, sortKey]);
+  }, [rows, region, regime, action, serviceLine, sortKey]);
 
   return (
     <div className="space-y-6">
@@ -127,7 +140,7 @@ export default function GeoClient({ rows }: { rows: GeoRow[] }) {
         <Select label="Region" value={region} onChange={setRegion} options={REGIONS} />
         <Select label="Regime" value={regime} onChange={setRegime} options={regimes} />
         <Select label="Action" value={action} onChange={setAction} options={ACTIONS} />
-        <Select label="Category" value={category} onChange={setCategory} options={CATEGORIES} />
+        <Select label="Service line" value={serviceLine} onChange={setServiceLine} options={SERVICE_LINES} />
         <Select label="Sort" value={sortKey} onChange={setSortKey} options={['opportunity', 'confidence', 'revenue', 'urgency'] as SortKey[]} />
         <span className="ml-auto text-xs text-muted">{filtered.length} markets</span>
       </div>
@@ -140,7 +153,10 @@ export default function GeoClient({ rows }: { rows: GeoRow[] }) {
               <tr className="border-b text-left text-xs uppercase tracking-wide text-muted">
                 <th className="px-4 py-3">DMA</th>
                 <th className="px-4 py-3">Regime</th>
-                <th className="px-4 py-3">Category</th>
+                <th className="px-4 py-3">Service line</th>
+                <th className="px-4 py-3 text-right">Locations</th>
+                <th className="px-4 py-3">Density</th>
+                <th className="px-4 py-3">Capacity</th>
                 <th className="px-4 py-3 text-right">Opp</th>
                 <th className="px-4 py-3 text-right">mROAS</th>
                 <th className="px-4 py-3 text-right">Rev Lift</th>
@@ -160,7 +176,10 @@ export default function GeoClient({ rows }: { rows: GeoRow[] }) {
                     <div className="text-xs text-muted">{r.rec.region}</div>
                   </td>
                   <td className="px-4 py-3"><Pill>{r.rec.regime}</Pill></td>
-                  <td className="px-4 py-3 text-xs">{r.rec.product_category}</td>
+                  <td className="px-4 py-3 text-xs">{r.rec.service_line}</td>
+                  <td className="px-4 py-3 text-right tabular">{r.locationCount}</td>
+                  <td className="px-4 py-3 text-xs">{r.locationDensity}</td>
+                  <td className="px-4 py-3"><CapacityBadge status={r.capacityStatus} /></td>
                   <td className="px-4 py-3 text-right tabular font-semibold">{r.rec.opportunityScore}</td>
                   <td className="px-4 py-3 text-right tabular">{r.rec.marginalRoas.toFixed(2)}</td>
                   <td className="px-4 py-3 text-right tabular text-[var(--positive)]">{fmtCurrency(r.rec.expectedRevenueLift)}</td>
@@ -220,7 +239,9 @@ function DMAInsightDrawer({ row, onClose }: { row: GeoRow; onClose: () => void }
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-lg font-semibold">{rec.dmaName}</h2>
-            <p className="text-xs text-muted">{rec.region} · pop {row.population.toLocaleString()}</p>
+            <p className="text-xs text-muted">
+              {rec.region} · pop {row.population.toLocaleString()} · {row.locationCount} locations ({row.locationDensity} density) · capacity {row.capacityStatus}
+            </p>
           </div>
           <button onClick={onClose} className="rounded-md border px-3 py-1 text-sm text-muted hover:text-foreground">
             Close
@@ -230,7 +251,8 @@ function DMAInsightDrawer({ row, onClose }: { row: GeoRow; onClose: () => void }
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <ActionBadge action={rec.action} />
           <Pill>{rec.regime}</Pill>
-          <Pill>{rec.product_category}</Pill>
+          <Pill>{rec.service_line}</Pill>
+          <CapacityBadge status={row.capacityStatus} />
           <ConfidenceBadge value={rec.confidence} />
         </div>
 
@@ -244,8 +266,10 @@ function DMAInsightDrawer({ row, onClose }: { row: GeoRow; onClose: () => void }
         <Section title="Weather Summary">
           <p className="text-xs leading-relaxed text-muted">
             {rec.dmaName} is in a <strong className="text-foreground">{rec.regime}</strong> regime with a temperature anomaly of{' '}
-            {row.tempAnomaly}°C. Indoor Behavior Index {row.indoorIndex}/100 and {rec.product_category} Category Trigger Index{' '}
-            {row.triggerIndex}/100.
+            {row.tempAnomaly}°C. Indoor/Friction Index {row.indoorIndex}/100 and {rec.service_line} Service Trigger Index{' '}
+            {row.triggerIndex}/100. Service network: {row.locationCount} locations ({row.locationDensity} density), capacity{' '}
+            <strong className="text-foreground">{row.capacityStatus}</strong>
+            {row.capacityStatus === 'Maxed' ? ' — do not add spend here even if demand is high; bays are full.' : '.'}
           </p>
         </Section>
 

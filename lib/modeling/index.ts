@@ -1,10 +1,16 @@
 /**
- * Geo Demand Engine — modeling core.
+ * Geo Demand Engine — modeling core (Quick-Lube Auto Services configuration).
  *
  * SIMPLIFICATION NOTE: These are deterministic, interpretable heuristic models that
  * stand in for a future true Bayesian/hierarchical MMM. Every function here is a
  * transparent approximation chosen so the demo behaves sensibly and is fully
  * inspectable. Where a real causal/Bayesian model would live, this is flagged.
+ *
+ * The signal model is tuned for a physical auto-services chain (Jiffy Lube-style):
+ * weather is a deterministic demand shock on vehicle maintenance (cold kills
+ * batteries, heat overwhelms cooling systems, storms defer then release demand),
+ * Google Search is the dominant bottom-of-funnel channel, and physical service
+ * locations have real capacity ceilings and elevated visit friction.
  */
 import {
   Action,
@@ -13,8 +19,8 @@ import {
   DMA,
   FunnelStage,
   MatchedMarket,
-  ProductCategory,
   Recommendation,
+  ServiceLine,
   WeatherRegime,
 } from '../types';
 import { categoryWeatherMultiplier } from '../mockData';
@@ -37,7 +43,8 @@ export function calculateWeatherAnomaly(
 }
 
 // ---------------------------------------------------------------------------
-// 2. Indoor Behavior Index (0-100): how much weather pushes people indoors
+// 2. Indoor Behavior Index (0-100): how much weather pushes people to stay home
+//    / defer a service visit and browse/book digitally instead of driving in.
 // ---------------------------------------------------------------------------
 export function calculateIndoorBehaviorIndex(inputs: {
   temperature: number;
@@ -60,46 +67,63 @@ export function calculateIndoorBehaviorIndex(inputs: {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Category Trigger Index (0-100): weather-driven category relevance
+// 3. Service Trigger Index (0-100): weather-driven service-line relevance
 // ---------------------------------------------------------------------------
 export function calculateCategoryTriggerIndex(
-  category: ProductCategory,
+  serviceLine: ServiceLine,
   regime: WeatherRegime,
   anomaly: { tempAnomaly: number },
 ): number {
-  const mult = categoryWeatherMultiplier(category, regime, anomaly.tempAnomaly);
+  const mult = categoryWeatherMultiplier(serviceLine, regime, anomaly.tempAnomaly);
   // map multiplier (~0.5-1.9) to 0-100, where 1.0 -> 50
   return clamp(Math.round((mult - 0.5) * (100 / 1.4)), 0, 100);
 }
 
 // ---------------------------------------------------------------------------
-// 4. Weather Friction Index (0-100): friction to purchase / fulfillment
+// 4. Weather Friction Index (0-100): friction to actually visiting a service bay.
+//
+//    Physical service businesses carry HIGHER friction than online retail — nobody wants to
+//    drive out and sit in a waiting room during snow/rain. High friction during an
+//    event suppresses current-period visits but builds "deferred demand" that is
+//    released post-event (see calculateDeferredDemandMultiplier).
 // ---------------------------------------------------------------------------
 export function calculateWeatherFrictionIndex(inputs: {
   precipitation: number;
   snow: number;
   severe: boolean;
-  inventoryHealthy: boolean;
+  capacityHealthy: boolean;
 }): number {
-  let score = 5;
-  score += Math.min(35, inputs.precipitation * 2.5);
-  score += Math.min(40, inputs.snow * 5);
-  if (inputs.severe) score += 30;
-  if (!inputs.inventoryHealthy) score += 25;
+  let score = 10; // physical-visit baseline friction is higher than online
+  score += Math.min(40, inputs.precipitation * 3);
+  score += Math.min(45, inputs.snow * 6);
+  if (inputs.severe) score += 35;
+  if (!inputs.capacityHealthy) score += 25; // long waits add friction
   return clamp(Math.round(score), 0, 100);
+}
+
+/**
+ * Deferred-demand multiplier for the POST-event window. High friction during a
+ * weather event does not destroy demand — it defers it. The visits people skipped
+ * during the snow/storm return afterward as pent-up + deferred maintenance. This
+ * returns a multiplier (>1) applied to post-event baseline demand, scaled by how
+ * suppressive the event was.
+ */
+export function calculateDeferredDemandMultiplier(frictionIndex: number): number {
+  // Friction of 100 during an event -> ~1.6x demand release afterward.
+  return round2(1 + (clamp(frictionIndex, 0, 100) / 100) * 0.6);
 }
 
 // ---------------------------------------------------------------------------
 // 5. Adstock (geometric decay, channel-specific)
 // ---------------------------------------------------------------------------
 const CHANNEL_DECAY: Record<Channel, number> = {
-  Meta: 0.5,
-  'Google Search': 0.2,
-  TikTok: 0.45,
-  YouTube: 0.6,
-  CTV: 0.7,
-  Pinterest: 0.5,
-  'Amazon/RMN': 0.3,
+  'Google Search': 0.15, // very fast decay — search intent is immediate
+  Meta: 0.45,
+  YouTube: 0.55,
+  CTV: 0.65, // brand/awareness, slow build
+  'Direct Mail': 0.6, // coupons sit on the fridge, long decay tail
+  'Email/CRM': 0.3,
+  'Programmatic Display': 0.35,
 };
 
 export function calculateAdstock(
@@ -130,16 +154,82 @@ export function hillSaturation(spend: number, halfSaturation: number, slope: num
   return xs / (xs + Math.pow(halfSaturation, slope));
 }
 
+/**
+ * Channel-specific half-saturation guidance for auto services, expressed as a
+ * multiple of the DMA's per-channel base spend:
+ *  - Google Search: saturates faster in small DMAs (limited local search volume)
+ *  - CTV / Programmatic: broad reach, scales across large DMAs (higher half-sat)
+ *  - Direct Mail: step-function-like — below a minimum drop it's near zero, at/above
+ *    the drop threshold it steps up. Approximated here with a higher half-sat.
+ */
+const CHANNEL_HALFSAT_MULT: Record<Channel, number> = {
+  'Google Search': 0.8,
+  Meta: 1.1,
+  YouTube: 1.3,
+  CTV: 1.7,
+  'Direct Mail': 1.4,
+  'Email/CRM': 0.7,
+  'Programmatic Display': 1.6,
+};
+
+export function channelHalfSaturation(channel: Channel, baseSpend: number): number {
+  return Math.max(250, Math.round(baseSpend * (CHANNEL_HALFSAT_MULT[channel] ?? 1.1)));
+}
+
 // ---------------------------------------------------------------------------
 // 7. Baseline demand
+//
+//    Auto-service baseline incorporates maintenance seasonality (winter-prep in
+//    Oct-Nov and spring-maintenance in Mar-Apr run hot; Jan-Feb run cold),
+//    day-of-week (weekends are busier for oil changes), and location count (more
+//    locations = more addressable capacity in the DMA).
 // ---------------------------------------------------------------------------
 export function estimateBaselineDemand(inputs: {
   baselineIndex: number;
   population: number;
   categoryBase: number;
+  date?: string;
+  locationCount?: number;
 }): number {
   const popFactor = inputs.population / 2_000_000;
-  return Math.round(inputs.categoryBase * popFactor * (inputs.baselineIndex / 100));
+  const seasonMult = inputs.date ? maintenanceSeasonMultiplier(inputs.date) : 1;
+  const dowMult = inputs.date ? dayOfWeekMultiplier(inputs.date) : 1;
+  const locMult = inputs.locationCount ? locationCapacityMultiplier(inputs.locationCount) : 1;
+  return Math.round(
+    inputs.categoryBase * popFactor * (inputs.baselineIndex / 100) * seasonMult * dowMult * locMult,
+  );
+}
+
+/** Maintenance-season multiplier: winter-prep (Oct-Nov) & spring (Mar-Apr) above baseline. */
+export function maintenanceSeasonMultiplier(dateStr: string): number {
+  const month = Number(dateStr.slice(5, 7)); // 1-12
+  switch (month) {
+    case 10:
+    case 11:
+      return 1.18; // winter-prep season
+    case 3:
+    case 4:
+      return 1.15; // spring maintenance season
+    case 1:
+    case 2:
+      return 0.88; // cold + post-holiday deferral
+    default:
+      return 1;
+  }
+}
+
+/** Weekends run higher for oil changes (people have time to come in). */
+export function dayOfWeekMultiplier(dateStr: string): number {
+  const dow = new Date(`${dateStr}T00:00:00Z`).getUTCDay(); // 0 = Sun
+  if (dow === 6) return 1.25; // Saturday
+  if (dow === 0) return 1.1; // Sunday
+  if (dow === 5) return 1.08; // Friday
+  return 0.96;
+}
+
+/** More locations = more addressable capacity. Diminishing returns via sqrt. */
+export function locationCapacityMultiplier(locationCount: number): number {
+  return round2(0.6 + Math.sqrt(Math.max(1, locationCount)) * 0.12);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +249,12 @@ export function estimateMediaIncrementality(inputs: {
 
 // ---------------------------------------------------------------------------
 // 9. Weather x media interaction multiplier (~0.7 - 1.6)
+//
+//    For auto services, SEARCH gets the biggest interaction boost during
+//    pre-event / First Cold Snap urgency windows — people actively search
+//    "oil change near me" the moment winter arrives. Brand channels (CTV /
+//    Programmatic / YouTube) interact more strongly during Normal conditions,
+//    when there is no urgency trigger and brand building is the right play.
 // ---------------------------------------------------------------------------
 const REGIME_MEDIA_BIAS: Partial<Record<WeatherRegime, number>> = {
   'Heat Wave': 0.15,
@@ -173,6 +269,15 @@ const REGIME_MEDIA_BIAS: Partial<Record<WeatherRegime, number>> = {
   Normal: 0,
 };
 
+const URGENCY_REGIMES: WeatherRegime[] = [
+  'First Cold Snap',
+  'Cold Snap',
+  'Heat Wave',
+  'Snow Event',
+  'Rainy Weekend',
+  'First Warm Weekend',
+];
+
 export function estimateWeatherMediaInteraction(inputs: {
   regime: WeatherRegime;
   channel: Channel;
@@ -180,12 +285,31 @@ export function estimateWeatherMediaInteraction(inputs: {
   triggerIndex: number; // 0-100
 }): number {
   let m = 1 + (REGIME_MEDIA_BIAS[inputs.regime] ?? 0);
-  // higher category relevance amplifies media efficiency
+  // higher service relevance amplifies media efficiency
   m += ((inputs.triggerIndex - 50) / 100) * 0.4;
+
+  const isUrgency = URGENCY_REGIMES.includes(inputs.regime);
+  // Search dominates urgency windows: "oil change near me" intent spikes.
+  if (inputs.channel === 'Google Search' && isUrgency) {
+    m += inputs.regime === 'First Cold Snap' ? 0.22 : 0.14;
+  }
+  // Brand/awareness media works hardest when there's no urgency trigger.
+  if (
+    (inputs.channel === 'CTV' ||
+      inputs.channel === 'Programmatic Display' ||
+      inputs.channel === 'YouTube') &&
+    inputs.regime === 'Normal'
+  ) {
+    m += 0.12;
+  }
+  // Retention channels (Direct Mail / Email) do their best post-event reactivation.
+  if ((inputs.channel === 'Direct Mail' || inputs.channel === 'Email/CRM') && isUrgency) {
+    m += 0.06;
+  }
   // funnel timing: during high-relevance windows, BOF/Search converts better
   if (inputs.funnel === 'BOF') m += 0.08;
   if (inputs.funnel === 'TOF' && inputs.triggerIndex > 65) m += 0.05;
-  // severe storm suppresses paid efficiency regardless of channel
+  // severe storm suppresses paid efficiency regardless of channel (handled by bias)
   return clamp(round2(m), 0.7, 1.6);
 }
 
@@ -199,7 +323,7 @@ export function decomposeRevenue(inputs: {
   interactionMultiplier: number;
   promoActive: boolean;
   promoDiscount: number;
-  inventoryHealthy: boolean;
+  capacityHealthy: boolean;
   seed?: number;
 }): DecompositionResult {
   const baseline = inputs.baseline;
@@ -208,19 +332,20 @@ export function decomposeRevenue(inputs: {
   const mediaLift = Math.round(inputs.mediaIncrementality);
   const interactionLift = Math.round(mediaLift * (inputs.interactionMultiplier - 1));
   const promoLift = inputs.promoActive ? Math.round(baseline * inputs.promoDiscount * 0.8) : 0;
-  const inventoryEffect = inputs.inventoryHealthy ? 0 : -Math.round(baseline * 0.12);
+  // Capacity-constrained DMAs turn demand away (waits, full bays).
+  const capacityEffect = inputs.capacityHealthy ? 0 : -Math.round(baseline * 0.12);
   const seasonality = Math.round(baseline * 0.05);
   const noiseRng = (Math.sin((inputs.seed ?? 1) * 12.9898) * 43758.5453) % 1;
   const noise = Math.round(baseline * 0.03 * (noiseRng - 0.5) * 2);
   const observed =
-    baseline + weatherLift + mediaLift + interactionLift + promoLift + inventoryEffect + seasonality + noise;
+    baseline + weatherLift + mediaLift + interactionLift + promoLift + capacityEffect + seasonality + noise;
   return {
     baseline,
     weatherLift,
     mediaLift,
     interactionLift,
     promoLift,
-    inventoryEffect,
+    capacityEffect,
     seasonality,
     noise,
     observed,
@@ -259,12 +384,12 @@ export function calculateMarginalROAS(inputs: {
 // ---------------------------------------------------------------------------
 export function generateRecommendation(inputs: {
   dma: DMA;
-  category: ProductCategory;
+  serviceLine: ServiceLine;
   regime: WeatherRegime;
   decomposition: DecompositionResult;
   marginalRoas: number;
   confidence: number;
-  inventoryHealthy: boolean;
+  capacityHealthy: boolean;
   creativeReady: boolean;
   topChannel: Channel;
   funnelFocus: FunnelStage;
@@ -273,11 +398,11 @@ export function generateRecommendation(inputs: {
   const totalLift = d.weatherLift + d.mediaLift + d.interactionLift;
   const weatherShare = totalLift > 0 ? clamp(d.weatherLift / totalLift, 0, 1) : 0;
   const riskFlags: string[] = [];
-  if (!inputs.inventoryHealthy) riskFlags.push('Inventory constrained');
+  if (!inputs.capacityHealthy) riskFlags.push('Capacity constrained (long waits / bays full)');
   if (!inputs.creativeReady) riskFlags.push('Creative not ready');
   if (inputs.confidence < 0.55) riskFlags.push('Low model confidence');
   if (weatherShare > 0.65) riskFlags.push('Lift mostly weather-driven (low media causality)');
-  if (inputs.regime === 'Severe Storm') riskFlags.push('Severe weather suppresses fulfillment');
+  if (inputs.regime === 'Severe Storm') riskFlags.push('Severe weather suppresses store visits');
 
   const opportunityScore = clamp(
     Math.round(
@@ -289,9 +414,10 @@ export function generateRecommendation(inputs: {
     100,
   );
 
-  // Action logic — deliberately not always "Act"
+  // Action logic — deliberately not always "Act". A maxed/constrained DMA is
+  // suppressed even if demand is high (can't service more cars).
   let action: Action = 'Monitor';
-  if (inputs.regime === 'Severe Storm' || !inputs.inventoryHealthy) {
+  if (inputs.regime === 'Severe Storm' || !inputs.capacityHealthy) {
     action = 'Suppress';
   } else if (weatherShare > 0.7 && inputs.marginalRoas < 1.2) {
     // demand would happen anyway; don't waste incremental media
@@ -317,14 +443,14 @@ export function generateRecommendation(inputs: {
     100,
   );
 
-  const rationale = buildRationale(action, weatherShare, inputs.marginalRoas, inputs.regime, inputs.category);
+  const rationale = buildRationale(action, weatherShare, inputs.marginalRoas, inputs.regime, inputs.serviceLine);
 
   return {
-    id: `${inputs.dma.id}-${inputs.category}`,
+    id: `${inputs.dma.id}-${inputs.serviceLine}`,
     dma: inputs.dma.id,
     dmaName: inputs.dma.name,
     region: inputs.dma.region,
-    product_category: inputs.category,
+    service_line: inputs.serviceLine,
     regime: inputs.regime,
     action,
     confidence: inputs.confidence,
@@ -347,20 +473,20 @@ function buildRationale(
   weatherShare: number,
   mroas: number,
   regime: WeatherRegime,
-  category: ProductCategory,
+  serviceLine: ServiceLine,
 ): string {
   const ws = Math.round(weatherShare * 100);
   switch (action) {
     case 'Act':
-      return `${regime} is driving strong, media-responsive ${category} demand (mROAS ${mroas.toFixed(2)}). Weather explains ${ws}% of lift, leaving real incremental headroom for paid. Lean in now.`;
+      return `${regime} is driving strong, media-responsive ${serviceLine} demand (mROAS ${mroas.toFixed(2)}). Weather explains ${ws}% of the visit lift, leaving real incremental headroom for paid — bid up Search and drop a coupon now.`;
     case 'Test':
-      return `Promising ${category} signal under ${regime}, but confidence or creative readiness warrants a controlled geo lift test before scaling spend.`;
+      return `Promising ${serviceLine} signal under ${regime}, but confidence or creative readiness warrants a controlled geo lift test before scaling spend.`;
     case 'Ignore':
-      return `${ws}% of the ${category} lift is weather-driven demand that would convert regardless of media (mROAS ${mroas.toFixed(2)}). Adding spend mostly subsidizes organic demand — hold paid.`;
+      return `${ws}% of the ${serviceLine} lift is weather-driven demand that would convert regardless of media (mROAS ${mroas.toFixed(2)}). Adding spend mostly subsidizes walk-in demand — hold paid.`;
     case 'Suppress':
-      return `${regime} / fulfillment constraints make this a poor window for paid acquisition. Pull back spend to protect efficiency and CX.`;
+      return `${regime} / capacity constraints make this a poor window for paid acquisition. Pull back spend so bays aren't overwhelmed and wait times stay manageable.`;
     default:
-      return `Weak or uncertain ${category} signal under ${regime}. Keep monitoring; no action yet.`;
+      return `Weak or uncertain ${serviceLine} signal under ${regime}. Keep monitoring; no action yet.`;
   }
 }
 
@@ -457,56 +583,133 @@ function marginalAt(o: OptimizerOpportunity, spend: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// 14. Creative brief generator
+// 14. Creative brief generator (auto-services taxonomy)
 // ---------------------------------------------------------------------------
 const ANGLE_BY_REGIME: Record<WeatherRegime, string> = {
-  'Cold Snap': 'Cold snap urgency',
-  'First Cold Snap': 'Seasonal transition',
-  'Heat Wave': 'Heat relief',
-  'Rainy Weekend': 'Rainy-day comfort',
-  'Snow Event': 'Indoor day / stay-home',
-  'High UV': 'UV protection',
-  'Poor Air Quality': 'Family-at-home',
-  'Severe Storm': 'Retail availability',
-  'First Warm Weekend': 'Seasonal transition',
-  Normal: 'Product education',
+  'Cold Snap': 'Cold start protection',
+  'First Cold Snap': 'Pre-winter prep urgency',
+  'Heat Wave': 'Heat check — protect your engine',
+  'Rainy Weekend': 'Wiper blade urgency',
+  'Snow Event': 'Get storm-ready now',
+  'High UV': 'Road trip ready',
+  'Poor Air Quality': 'Cabin air filter refresh',
+  'Severe Storm': 'Schedule before the storm',
+  'First Warm Weekend': 'Spring maintenance season is here',
+  Normal: 'Stay on schedule',
+};
+
+const HOOKS_BY_REGIME: Record<WeatherRegime, string[]> = {
+  'Cold Snap': [
+    'Your engine works harder in the cold. Is your oil ready?',
+    "Cold snaps kill batteries. Don't find out the hard way.",
+    'Synthetic oil outperforms in cold — upgrade before temps drop.',
+  ],
+  'First Cold Snap': [
+    'Winter just knocked — is your car ready?',
+    'First cold snap of the season is the #1 time people regret skipping their oil change.',
+    'Pre-winter checklist: wipers, battery, oil — are you covered?',
+  ],
+  'Heat Wave': [
+    "Heat kills engines faster than cold. When'd you last check your coolant?",
+    "90°+ days are the #1 battery killer. Don't get stranded.",
+    'Your engine oil breaks down faster in heat — protect it.',
+  ],
+  'Rainy Weekend': [
+    'Can your wipers handle this weekend?',
+    "Rain's coming. Wiper blades take 5 minutes. Do it before the storm.",
+    "Don't wait until you can't see through the windshield.",
+  ],
+  'Snow Event': [
+    'Snow in the forecast — is your car storm-ready?',
+    'Wipers, battery, oil: get ready before the first flakes fall.',
+    "Beat the storm rush. Book your winter check now.",
+  ],
+  'High UV': [
+    'Headed out on a road trip? Get a pre-trip checkup first.',
+    'Long summer drives are hard on oil and coolant — top off before you go.',
+    'Road-trip ready in under 15 minutes.',
+  ],
+  'Poor Air Quality': [
+    'Breathing easy in the car starts with a fresh cabin air filter.',
+    'Hazy skies? Your cabin air filter is working overtime — refresh it.',
+    'A clogged cabin filter means dirtier air inside your car. Swap it today.',
+  ],
+  'Severe Storm': [
+    'Schedule your service for after the storm clears.',
+    "Stay off the roads today — book your visit for when it's safe.",
+    "Storm's coming. Lock in your appointment for the calm afterward.",
+  ],
+  'First Warm Weekend': [
+    "Post-winter checkup: how'd your car hold up?",
+    'Spring means maintenance season. Get ahead of the line.',
+    'Your car deferred maintenance all winter. Time to catch up.',
+  ],
+  Normal: [
+    'Overdue for an oil change? Most take under 15 minutes.',
+    'Stay on schedule — quick, no appointment needed.',
+    "Due for service? We'll get you in and out.",
+  ],
+};
+
+const CTA_BY_REGIME: Record<WeatherRegime, string> = {
+  'Cold Snap': 'Book your cold-weather check before temps drop',
+  'First Cold Snap': 'Book your winter-prep visit before the cold hits',
+  'Heat Wave': 'Book your heat check — walk-ins welcome',
+  'Rainy Weekend': 'Swap your wipers before the rain hits',
+  'Snow Event': 'Book before the storm hits',
+  'High UV': 'Book your pre-road-trip checkup',
+  'Poor Air Quality': 'Refresh your cabin air filter today',
+  'Severe Storm': 'Schedule for after the storm clears',
+  'First Warm Weekend': 'Get your post-winter checkup — walk-ins welcome',
+  Normal: 'Overdue? Most oil changes take under 15 minutes.',
+};
+
+const COUPON_BY_REGIME: Record<WeatherRegime, string> = {
+  'Cold Snap': 'Synthetic upgrade for $20 off — valid 7 days',
+  'First Cold Snap': 'Winter-prep bundle: oil + battery test + wiper check, $25 off',
+  'Heat Wave': 'Cooling system flush $30 off — valid 10 days',
+  'Rainy Weekend': 'Wiper blade pair installed, $10 off this week',
+  'Snow Event': 'Pre-storm winter check $20 off — book by Friday',
+  'High UV': 'Road-trip ready package $15 off',
+  'Poor Air Quality': 'Cabin + engine air filter combo, $12 off',
+  'Severe Storm': 'Post-storm deferred-maintenance check, $20 off — valid 7 days after',
+  'First Warm Weekend': 'Spring maintenance package $25 off — valid 14 days',
+  Normal: 'Standard oil change $10 off with this coupon',
 };
 
 export function generateCreativeBrief(inputs: {
   dma: DMA;
   regime: WeatherRegime;
-  category: ProductCategory;
+  serviceLine: ServiceLine;
   indoorIndex: number;
 }): import('../types').CreativeBrief {
-  const angle = ANGLE_BY_REGIME[inputs.regime] ?? 'Product education';
-  const indoor = inputs.indoorIndex > 55;
-  const hooks = [
-    `${inputs.regime} just hit ${inputs.dma.name} — here's what people are reaching for`,
-    `When the weather turns, ${inputs.category} sells itself`,
-    indoor ? `Stuck inside? Make it count.` : `Get ahead of the forecast`,
-  ];
+  const angle = ANGLE_BY_REGIME[inputs.regime] ?? 'Stay on schedule';
+  const highFriction = inputs.indoorIndex > 55;
+  const hooks = HOOKS_BY_REGIME[inputs.regime] ?? HOOKS_BY_REGIME.Normal;
   return {
-    id: `BRIEF-${inputs.dma.id}-${inputs.category}`,
+    id: `BRIEF-${inputs.dma.id}-${inputs.serviceLine}`,
     dma: inputs.dma.id,
     dmaName: inputs.dma.name,
     region: inputs.dma.region,
     regime: inputs.regime,
-    product_category: inputs.category,
-    weatherContext: `${inputs.regime} conditions in ${inputs.dma.name} (${inputs.dma.region}). Indoor Behavior Index ${inputs.indoorIndex}.`,
-    consumerMindset: indoor
-      ? 'Home-bound, browsing on mobile, receptive to comfort and convenience messaging.'
-      : 'Active and forward-planning; receptive to urgency and preparedness messaging.',
+    service_line: inputs.serviceLine,
+    weatherContext: `${inputs.regime} conditions in ${inputs.dma.name} (${inputs.dma.region}). Indoor/Friction Index ${inputs.indoorIndex} — ${highFriction ? 'high friction to visit right now, lean on pre-booking and post-event scheduling' : 'low friction, drive walk-in traffic now'}.`,
+    consumerMindset: highFriction
+      ? 'Reluctant to drive out in this weather; receptive to "book now, come in when it clears" and reminders that deferred maintenance is piling up.'
+      : 'Reminded that weather is stressing their vehicle; receptive to urgency and "quick, no-appointment" convenience messaging.',
     messageAngle: angle,
     hooks,
-    cta: indoor ? 'Shop from the couch' : 'Beat the forecast',
-    landingPageRec: `${inputs.category} weather-collection PDP with local availability badge`,
+    cta: CTA_BY_REGIME[inputs.regime] ?? CTA_BY_REGIME.Normal,
+    couponOffer: COUPON_BY_REGIME[inputs.regime] ?? COUPON_BY_REGIME.Normal,
+    landingPageRec: `${inputs.serviceLine} booking page with "near me" location finder, live wait times, and the coupon pre-applied`,
     channelGuidance: [
-      { channel: 'Meta', funnel: 'MOF', note: 'Dynamic product ads with weather-themed creative' },
-      { channel: 'Google Search', funnel: 'BOF', note: 'Bid up category + "near me" terms during the window' },
-      { channel: 'TikTok', funnel: 'TOF', note: indoor ? 'UGC indoor-use content' : 'Trend-led seasonal content' },
+      { channel: 'Google Search', funnel: 'BOF', note: 'Always-on BOF: bid up "oil change near me", "oil change [city]", "wiper blades near me" during the window' },
+      { channel: 'CTV', funnel: 'TOF', note: "Run 15s 'is your car ready?' spots during local weather-forecast slots" },
+      { channel: 'Meta', funnel: 'MOF', note: highFriction ? 'Retarget recent visitors with "book now, come in when it clears" scheduling offers' : 'Weather-themed offer creative with location + wait-time extension' },
+      { channel: 'Direct Mail', funnel: 'Retention', note: 'Drop the DMA coupon with a unique promo code so mail lift can be measured separately from organic' },
     ],
-    measurementPlan: 'Geo holdout vs matched control; read incremental revenue and new-customer rate over the weather window + 7-day tail.',
-    format: indoor ? 'UGC' : 'Video',
+    measurementPlan: 'Geo holdout vs matched control; read incremental service visits, coupon redemption, and new-vs-returning mix over the weather window + a 7-day post-event tail (deferred demand releases after the event).',
+    format: highFriction ? 'Video' : 'Static',
   };
 }
 

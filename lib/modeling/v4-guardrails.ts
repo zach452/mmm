@@ -5,7 +5,7 @@
  * pushed to an ad platform. Reuses V3's bootstrap credible interval to gate on the
  * lower bound of the marginal-ROAS interval vs. breakeven.
  */
-import type { Channel, InventoryStatus } from '../types';
+import type { CapacityStatus, Channel } from '../types';
 import { bootstrapCredibleInterval } from './v3-bayesian';
 
 export interface ActivationAction {
@@ -16,7 +16,7 @@ export interface ActivationAction {
 }
 
 export interface GuardrailContext {
-  inventoryStatus: InventoryStatus;
+  capacityStatus: CapacityStatus;
   creativeReadiness: boolean;
   /** marginal ROAS daily samples — bootstrapped into a CI; OR a precomputed CI. */
   marginalRoasSamples?: number[];
@@ -55,13 +55,14 @@ export function evaluateActivationGuardrails(
         ? Infinity
         : 0;
 
-  // Rule 1: out-of-stock + increasing spend -> block.
-  if (context.inventoryStatus === 'Out of Stock' && increasing) {
+  // Rule 1: maxed capacity + increasing spend -> block. A DMA whose bays are full
+  // (long waits) cannot service more cars; buying more demand just erodes CX.
+  if (context.capacityStatus === 'Maxed' && increasing) {
     blockedReasons.push(
-      'Inventory is Out of Stock — cannot increase spend into unfulfillable demand.',
+      'Capacity is Maxed (bays full / long waits) — cannot increase spend into demand you cannot service.',
     );
-  } else if (context.inventoryStatus === 'Constrained' && increasing && pctChange > 0.1) {
-    warnings.push('Inventory is Constrained — scaling spend may outrun fulfillment.');
+  } else if (context.capacityStatus === 'Constrained' && increasing && pctChange > 0.1) {
+    warnings.push('Capacity is Constrained — scaling spend may outrun available service bays.');
   }
 
   // Rule 2: creative not ready + large increase -> block.

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { AllocationRow, Channel, Region } from '@/lib/types';
+import { AllocationRow, CapacityStatus, Channel, Region } from '@/lib/types';
 import { optimizeBudget, OptimizerOpportunity } from '@/lib/modeling';
 import {
   evaluateActivationGuardrails,
@@ -18,9 +18,9 @@ const META_CONNECTOR = new MetaAdsStubConnector();
 const GOOGLE_CONNECTOR = new GoogleAdsStubConnector();
 const SLACK_ALERT = new SlackAlertStubConnector();
 
-function rowInventory(dma: string, channel: string): 'Healthy' | 'Constrained' | 'Out of Stock' {
-  const r = mulberry32(hashSeed(`inv-${dma}-${channel}`))();
-  if (r < 0.1) return 'Out of Stock';
+function rowCapacity(dma: string, channel: string): CapacityStatus {
+  const r = mulberry32(hashSeed(`cap-${dma}-${channel}`))();
+  if (r < 0.1) return 'Maxed';
   if (r < 0.25) return 'Constrained';
   return 'Healthy';
 }
@@ -28,7 +28,7 @@ function rowCreativeReady(dma: string, channel: string): boolean {
   return mulberry32(hashSeed(`crt-${dma}-${channel}`))() > 0.2;
 }
 
-const CHANNELS: Channel[] = ['Meta', 'Google Search', 'TikTok', 'YouTube', 'CTV', 'Pinterest', 'Amazon/RMN'];
+const CHANNELS: Channel[] = ['Google Search', 'Meta', 'YouTube', 'CTV', 'Direct Mail', 'Email/CRM', 'Programmatic Display'];
 const REGIONS: Region[] = ['Northeast', 'Midwest', 'South', 'West', 'Pacific Northwest', 'Southwest'];
 
 export interface ChannelCalibration {
@@ -53,7 +53,7 @@ export default function Optimizer({
   const [priorityKpi, setPriorityKpi] = useState('Revenue');
   const [excludedChannels, setExcludedChannels] = useState<Set<Channel>>(new Set());
   const [excludedRegions, setExcludedRegions] = useState<Set<Region>>(new Set());
-  const [inventoryConstraint, setInventoryConstraint] = useState(true);
+  const [capacityConstraint, setCapacityConstraint] = useState(true);
   const [creativeReady, setCreativeReady] = useState(true);
 
   const result = useMemo(() => {
@@ -74,7 +74,7 @@ export default function Optimizer({
     return rows.sort((a, b) => b.delta - a.delta);
   }, [opportunities, budget, maxShiftChannel, riskTolerance, excludedChannels, excludedRegions, useCalibrated, calibration]);
 
-  void priorityKpi; void inventoryConstraint; void creativeReady;
+  void priorityKpi; void capacityConstraint; void creativeReady;
 
   // V4 guardrails: evaluate each allocation row.
   const guardrails = useMemo(() => {
@@ -92,7 +92,7 @@ export default function Optimizer({
           currentSpend: r.currentSpend,
         },
         {
-          inventoryStatus: rowInventory(r.dma, r.channel),
+          capacityStatus: rowCapacity(r.dma, r.channel),
           creativeReadiness: rowCreativeReady(r.dma, r.channel),
           marginalRoasCI: { point, lower: point - spread, upper: point + spread },
           riskTolerance,
@@ -119,7 +119,7 @@ export default function Optimizer({
         { dma: r.dma, channel: r.channel, proposedSpendChange: r.delta, currentSpend: r.currentSpend },
         r.recommendedSpend,
         {
-          inventoryStatus: rowInventory(r.dma, r.channel),
+          capacityStatus: rowCapacity(r.dma, r.channel),
           creativeReadiness: rowCreativeReady(r.dma, r.channel),
           marginalRoasCI: { point, lower: point - spread, upper: point + spread },
           riskTolerance,
@@ -131,7 +131,7 @@ export default function Optimizer({
     if (blockedCount > 0) {
       await SLACK_ALERT.send({
         title: 'Activation guardrails blocked rows',
-        body: `${blockedCount} of ${results.length} proposed pushes were blocked by guardrails (inventory / creative / ROAS).`,
+        body: `${blockedCount} of ${results.length} proposed pushes were blocked by guardrails (capacity / creative / ROAS).`,
         severity: 'warning',
       });
     }
@@ -155,7 +155,7 @@ export default function Optimizer({
           <Field label="Priority KPI"><select value={priorityKpi} onChange={(e) => setPriorityKpi(e.target.value)} className="sel"><option>Revenue</option><option>New Customers</option><option>Contribution Margin</option><option>MER</option></select></Field>
           <Field label="Risk tolerance"><select value={riskTolerance} onChange={(e) => setRiskTolerance(e.target.value as 'Conservative' | 'Balanced' | 'Aggressive')} className="sel"><option>Conservative</option><option>Balanced</option><option>Aggressive</option></select></Field>
           <div className="flex items-center gap-4 pt-5">
-            <Toggle label="Inventory constraint" value={inventoryConstraint} onChange={setInventoryConstraint} />
+            <Toggle label="Capacity constraint" value={capacityConstraint} onChange={setCapacityConstraint} />
             <Toggle label="Creative readiness" value={creativeReady} onChange={setCreativeReady} />
           </div>
         </div>
@@ -259,7 +259,7 @@ export default function Optimizer({
 
       <SectionCard
         title="Platform Activation (V4 · guardrailed, simulated)"
-        subtitle="Each spend increase is checked against activation guardrails (inventory, creative readiness, marginal-ROAS CI vs breakeven, step-size cap) before being pushed. Connectors are clearly-labeled stubs — V5 would use real Meta/Google OAuth credentials."
+        subtitle="Each spend increase is checked against activation guardrails (DMA capacity, creative readiness, marginal-ROAS CI vs breakeven, step-size cap) before being pushed. Connectors are clearly-labeled stubs — V5 would use real Meta/Google OAuth credentials."
       >
         <button
           onClick={pushToPlatforms}

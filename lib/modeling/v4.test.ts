@@ -53,12 +53,13 @@ describe('automatedGeoExperimentDesign', () => {
   function mkDma(id: string, region: DMA['region'], pop: number): DMA {
     return {
       id, name: id, region, population: pop, baselineIndex: 100, lat: 40, lon: -100,
+      locationCount: 12, locationDensity: 'Medium',
       climate: { baseTempC: 15, seasonalAmplitude: 10, basePrecip: 2, snowProne: false, uvProne: true, airQualityRisk: 0.3 },
     };
   }
   function mkRec(dma: string, opp: number, mroas: number): Recommendation {
     return {
-      id: dma, dma, dmaName: dma, region: 'West', product_category: 'Hydration', regime: 'Heat Wave',
+      id: dma, dma, dmaName: dma, region: 'West', service_line: 'Standard Oil Change', regime: 'Heat Wave',
       action: 'Test', confidence: 0.7, opportunityScore: opp, expectedRevenueLift: 1000,
       expectedMarginImpact: 400, recommendedBudgetShift: 100, marginalRoas: mroas, weatherShare: 0.3,
       riskFlags: [], rationale: '', topChannel: 'Meta', funnelFocus: 'MOF', urgency: 50,
@@ -87,16 +88,16 @@ describe('evaluateActivationGuardrails', () => {
 
   it('blocks on out-of-stock + increasing spend', () => {
     const res = evaluateActivationGuardrails(baseAction, {
-      inventoryStatus: 'Out of Stock', creativeReadiness: true,
+      capacityStatus: 'Maxed', creativeReadiness: true,
       marginalRoasCI: { point: 2, lower: 1.5, upper: 2.5 }, riskTolerance: 'Balanced',
     });
     expect(res.approved).toBe(false);
-    expect(res.blockedReasons.join(' ')).toMatch(/Out of Stock/);
+    expect(res.blockedReasons.join(' ')).toMatch(/Maxed/);
   });
 
   it('blocks when CI lower bound is below breakeven', () => {
     const res = evaluateActivationGuardrails(baseAction, {
-      inventoryStatus: 'Healthy', creativeReadiness: true,
+      capacityStatus: 'Healthy', creativeReadiness: true,
       marginalRoasCI: { point: 1.1, lower: 0.7, upper: 1.5 }, riskTolerance: 'Balanced',
     });
     expect(res.approved).toBe(false);
@@ -107,7 +108,7 @@ describe('evaluateActivationGuardrails', () => {
     const res = evaluateActivationGuardrails(
       { dma: 'D1', channel: 'Meta', proposedSpendChange: 200, currentSpend: 2000 },
       {
-        inventoryStatus: 'Healthy', creativeReadiness: true,
+        capacityStatus: 'Healthy', creativeReadiness: true,
         marginalRoasCI: { point: 2.5, lower: 1.8, upper: 3.2 }, riskTolerance: 'Balanced',
       },
     );

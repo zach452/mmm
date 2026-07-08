@@ -6,11 +6,13 @@
 import {
   generateDMAs,
   generateMedia,
-  generateSales,
+  generateServiceObservations,
   generateWeatherForDMA,
   generateWeatherForecast,
   HISTORY_DAYS,
-  PRODUCT_CATEGORIES,
+  SERVICE_LINES,
+  SERVICE_LINE_BASE_REVENUE,
+  CHANNEL_FUNNEL_MAP,
 } from './mockData';
 import {
   shrinkDmaIncrementality,
@@ -32,44 +34,39 @@ import {
   generateRecommendation,
 } from './modeling';
 import {
+  CapacityStatus,
   Channel,
   DMA,
   DecompositionResult,
-  ProductCategory,
   Recommendation,
+  ServiceLine,
   WeatherObservation,
 } from './types';
 
-const CATEGORY_BASE: Record<ProductCategory, number> = {
-  'At-Home Beauty': 42000,
-  Outerwear: 38000,
-  Footwear: 35000,
-  Hydration: 28000,
-  'Baby Care': 30000,
-  Wellness: 33000,
-};
+const CATEGORY_BASE = SERVICE_LINE_BASE_REVENUE;
 
-const CHANNEL_FUNNEL: Record<Channel, import('./types').FunnelStage> = {
-  Meta: 'MOF',
-  'Google Search': 'BOF',
-  TikTok: 'TOF',
-  YouTube: 'TOF',
-  CTV: 'TOF',
-  Pinterest: 'MOF',
-  'Amazon/RMN': 'BOF',
-};
+const CHANNEL_FUNNEL = CHANNEL_FUNNEL_MAP;
 
 export interface DMASnapshot {
   dma: DMA;
   latestWeather: WeatherObservation;
   marketNorm: { temperature: number; precipitation: number };
   indoorIndex: number;
-  // primary (highest-opportunity) category for this DMA right now
-  primaryCategory: ProductCategory;
+  // primary (highest-opportunity) service line for this DMA right now
+  primaryServiceLine: ServiceLine;
   triggerIndex: number;
+  capacityStatus: CapacityStatus; // service-network capacity headroom
   recommendation: Recommendation;
   decomposition: DecompositionResult;
-  recommendations: Recommendation[]; // across categories
+  recommendations: Recommendation[]; // across service lines
+}
+
+/** Deterministic capacity status for a DMA given its density and current demand pressure. */
+export function deriveCapacityStatus(dma: DMA, triggerIndex: number): CapacityStatus {
+  const healthy = dma.locationDensity !== 'Low' && (dma.population + triggerIndex) % 11 !== 0;
+  if (!healthy) return dma.locationDensity === 'Low' ? 'Maxed' : 'Constrained';
+  if (triggerIndex > 75 && dma.locationDensity !== 'High') return 'Constrained';
+  return 'Healthy';
 }
 
 function marketNorm(weather: WeatherObservation[]): { temperature: number; precipitation: number } {
@@ -83,13 +80,13 @@ function buildRecommendation(
   dma: DMA,
   latest: WeatherObservation,
   norm: { temperature: number; precipitation: number },
-  category: ProductCategory,
+  serviceLine: ServiceLine,
 ): { rec: Recommendation; decomp: DecompositionResult; trigger: number } {
   const anomaly = calculateWeatherAnomaly(
     { temperature: latest.temperature, precipitation: latest.precipitation },
     norm,
   );
-  const trigger = calculateCategoryTriggerIndex(category, latest.regime, anomaly);
+  const trigger = calculateCategoryTriggerIndex(serviceLine, latest.regime, anomaly);
   const indoor = calculateIndoorBehaviorIndex({
     temperature: latest.temperature,
     precipitation: latest.precipitation,
@@ -101,9 +98,11 @@ function buildRecommendation(
   const baseline = estimateBaselineDemand({
     baselineIndex: dma.baselineIndex,
     population: dma.population,
-    categoryBase: CATEGORY_BASE[category],
+    categoryBase: CATEGORY_BASE[serviceLine],
+    date: latest.date,
+    locationCount: dma.locationCount,
   });
-  // choose a representative channel for this category window
+  // choose a representative channel for this service window — Search dominates BOF.
   const topChannel: Channel = trigger > 60 ? 'Google Search' : 'Meta';
   const funnelFocus = CHANNEL_FUNNEL[topChannel];
   const interaction = estimateWeatherMediaInteraction({
@@ -120,6 +119,9 @@ function buildRecommendation(
     halfSaturation: halfSat,
     maxResponse: baseline * 0.4,
   });
+  // Capacity is a hard ceiling: DMAs with few locations relative to demand are more
+  // likely to be constrained; a deterministic feature drives some variety too.
+  const capacityHealthy = dma.locationDensity !== 'Low' && (dma.population + trigger) % 11 !== 0;
   const decomp = decomposeRevenue({
     baseline,
     triggerIndex: trigger,
@@ -127,7 +129,7 @@ function buildRecommendation(
     interactionMultiplier: interaction,
     promoActive: false,
     promoDiscount: 0,
-    inventoryHealthy: true,
+    capacityHealthy,
     seed: dma.population + trigger,
   });
   const { marginalRoas, confidence } = calculateMarginalROAS({
@@ -137,17 +139,15 @@ function buildRecommendation(
     maxResponse: baseline * 0.4,
     interactionMultiplier: interaction,
   });
-  // inject some variety in readiness based on deterministic features
-  const inventoryHealthy = (dma.population + trigger) % 11 !== 0;
   const creativeReady = trigger > 40 && dma.baselineIndex > 95;
   const rec = generateRecommendation({
     dma,
-    category,
+    serviceLine,
     regime: latest.regime,
     decomposition: decomp,
     marginalRoas,
     confidence,
-    inventoryHealthy,
+    capacityHealthy,
     creativeReady,
     topChannel,
     funnelFocus,
@@ -173,7 +173,7 @@ export function getDMASnapshots(): DMASnapshot[] {
       air_quality: latest.air_quality,
       severe: latest.severe_weather_flag,
     });
-    const perCat = PRODUCT_CATEGORIES.map((cat) => buildRecommendation(dma, latest, norm, cat));
+    const perCat = SERVICE_LINES.map((sl) => buildRecommendation(dma, latest, norm, sl));
     perCat.sort((a, b) => b.rec.opportunityScore - a.rec.opportunityScore);
     const top = perCat[0];
     return {
@@ -181,8 +181,9 @@ export function getDMASnapshots(): DMASnapshot[] {
       latestWeather: latest,
       marketNorm: norm,
       indoorIndex: indoor,
-      primaryCategory: top.rec.product_category,
+      primaryServiceLine: top.rec.service_line,
       triggerIndex: top.trigger,
+      capacityStatus: deriveCapacityStatus(dma, top.trigger),
       recommendation: top.rec,
       decomposition: top.decomp,
       recommendations: perCat.map((p) => p.rec),
@@ -207,16 +208,16 @@ export function getRecentDemandByDMA(): Record<string, number> {
   return out;
 }
 
-/** Build a time series of decomposition over the recent window for a DMA+category. */
+/** Build a time series of decomposition over the recent window for a DMA+service line. */
 export function getDecompositionSeries(
   dma: DMA,
-  category: ProductCategory,
+  serviceLine: ServiceLine,
   days = 60,
 ): (DecompositionResult & { date: string })[] {
   const weather = generateWeatherForDMA(dma, HISTORY_DAYS).slice(-days);
   const norm = marketNorm(generateWeatherForDMA(dma, HISTORY_DAYS));
   return weather.map((w) => {
-    const { decomp } = buildRecommendation(dma, w, norm, category);
+    const { decomp } = buildRecommendation(dma, w, norm, serviceLine);
     return { ...decomp, date: w.date };
   });
 }
@@ -246,15 +247,15 @@ export function getHierarchicalIncrementality(): Map<string, DmaIncrementalityRe
 export interface SyntheticControlView extends SyntheticControlResult {
   treatmentDma: string;
   treatmentName: string;
-  category: ProductCategory;
+  serviceLine: ServiceLine;
   observed: number[];
   dates: string[];
   treatmentStartIndex: number;
 }
 
-/** Daily total-revenue series for a DMA (summed across categories) over recent window. */
+/** Daily total-revenue series for a DMA (summed across service lines) over recent window. */
 function dmaRevenueSeries(dmaId: string, days: number): { dates: string[]; series: number[] } {
-  const sales = generateSales(generateDMAs(), HISTORY_DAYS).filter((s) => s.dma === dmaId);
+  const sales = generateServiceObservations(generateDMAs(), HISTORY_DAYS).filter((s) => s.dma === dmaId);
   const byDate = new Map<string, number>();
   for (const s of sales) byDate.set(s.date, (byDate.get(s.date) ?? 0) + s.revenue);
   const dates = Array.from(byDate.keys()).sort().slice(-days);
@@ -263,7 +264,7 @@ function dmaRevenueSeries(dmaId: string, days: number): { dates: string[]; serie
 
 export function getSyntheticControl(
   treatmentDmaId: string,
-  category: ProductCategory = 'Hydration',
+  serviceLine: ServiceLine = 'Standard Oil Change',
   days = 60,
 ): SyntheticControlView {
   const dmas = generateDMAs();
@@ -289,7 +290,7 @@ export function getSyntheticControl(
     weights: res.weights.map((w) => ({ dma: nameByDma.get(w.dma) ?? w.dma, weight: w.weight })),
     treatmentDma: treatment.id,
     treatmentName: treatment.name,
-    category,
+    serviceLine,
     observed: t.series,
     dates: t.dates,
     treatmentStartIndex,

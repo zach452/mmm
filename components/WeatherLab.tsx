@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ProductCategory, WeatherForecast, WeatherRegime } from '@/lib/types';
+import { ServiceLine, WeatherForecast, WeatherRegime } from '@/lib/types';
 import {
   calculateCategoryTriggerIndex,
   calculateIndoorBehaviorIndex,
@@ -20,12 +20,12 @@ export interface WeatherLabDMA {
   forecast: WeatherForecast[];
 }
 
-const CATEGORIES: ProductCategory[] = ['At-Home Beauty', 'Outerwear', 'Footwear', 'Hydration', 'Baby Care', 'Wellness'];
+const SERVICE_LINES: ServiceLine[] = ['Standard Oil Change', 'Synthetic Oil Change', 'Tire Services', 'Wiper Blades', 'Battery/Electrical', 'Cooling System', 'Air Filtration'];
 const REGIMES: WeatherRegime[] = ['Normal', 'Cold Snap', 'Heat Wave', 'Rainy Weekend', 'Snow Event', 'High UV', 'Poor Air Quality', 'Severe Storm', 'First Warm Weekend', 'First Cold Snap'];
 
 export default function WeatherLab({ dmas }: { dmas: WeatherLabDMA[] }) {
   const [dmaId, setDmaId] = useState(dmas[0].id);
-  const [category, setCategory] = useState<ProductCategory>('Outerwear');
+  const [serviceLine, setServiceLine] = useState<ServiceLine>('Synthetic Oil Change');
   const [window, setWindow] = useState<3 | 7 | 14>(7);
   const [overrideRegime, setOverrideRegime] = useState<WeatherRegime | 'Forecast'>('Forecast');
 
@@ -84,16 +84,16 @@ export default function WeatherLab({ dmas }: { dmas: WeatherLabDMA[] }) {
         air_quality: f.air_quality,
         severe: f.severe_weather_flag,
       });
-      const trigger = calculateCategoryTriggerIndex(category, regime, anomaly);
+      const trigger = calculateCategoryTriggerIndex(serviceLine, regime, anomaly);
       const friction = calculateWeatherFrictionIndex({
         precipitation: f.precipitation,
         snow: f.snow,
         severe: f.severe_weather_flag,
-        inventoryHealthy: true,
+        capacityHealthy: true,
       });
       return { date: f.date, label: f.date.slice(5), indoor, trigger, friction, regime, confidence: f.confidence };
     });
-  }, [horizon, category, overrideRegime, dma.marketNorm]);
+  }, [horizon, serviceLine, overrideRegime, dma.marketNorm]);
 
   const avg = (k: 'indoor' | 'trigger' | 'friction') =>
     Math.round(signals.reduce((s, x) => s + x[k], 0) / signals.length);
@@ -139,9 +139,9 @@ export default function WeatherLab({ dmas }: { dmas: WeatherLabDMA[] }) {
             ))}
           </select>
         </Field>
-        <Field label="Category">
-          <select value={category} onChange={(e) => setCategory(e.target.value as ProductCategory)} className="sel">
-            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        <Field label="Service line">
+          <select value={serviceLine} onChange={(e) => setServiceLine(e.target.value as ServiceLine)} className="sel">
+            {SERVICE_LINES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </Field>
         <Field label="Forecast window">
@@ -160,13 +160,13 @@ export default function WeatherLab({ dmas }: { dmas: WeatherLabDMA[] }) {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <WeatherSignalCard label="Indoor Behavior Index" value={avg('indoor')} description="How strongly weather pushes consumers indoors and onto mobile commerce." />
-        <WeatherSignalCard label={`Category Trigger — ${category}`} value={avg('trigger')} description="Weather-driven relevance of this category. 50 = neutral; higher means weather lifts demand." />
-        <WeatherSignalCard label="Weather Friction Index" value={avg('friction')} description="Friction to purchase and fulfillment from precipitation, snow, and severe weather." />
+        <WeatherSignalCard label="Indoor / Visit-Friction Index" value={avg('indoor')} description="How strongly weather keeps drivers home and pushes them to book online / defer their visit." />
+        <WeatherSignalCard label={`Service Trigger — ${serviceLine}`} value={avg('trigger')} description="Weather-driven relevance of this service line. 50 = neutral; higher means weather lifts demand." />
+        <WeatherSignalCard label="Weather Friction Index" value={avg('friction')} description="Friction to actually driving in for service from precipitation, snow, and severe weather. High friction now = deferred demand released post-event." />
         <WeatherSignalCard label="Weather Confidence" value={weatherConfidence} description="Forecast confidence over the selected horizon; decays with longer windows." />
       </div>
 
-      <SectionCard title="Signal Trajectory Over Forecast Window" subtitle={`${dma.name} · ${category} · ${window}-day horizon`}>
+      <SectionCard title="Signal Trajectory Over Forecast Window" subtitle={`${dma.name} · ${serviceLine} · ${window}-day horizon`}>
         <MiniLineChart data={chartData} dataKey="Trigger" color="#5b8cff" />
         <div className="mt-2 flex flex-wrap gap-2">
           {signals.map((s) => (
@@ -180,16 +180,19 @@ export default function WeatherLab({ dmas }: { dmas: WeatherLabDMA[] }) {
       <SectionCard title="How to Read These Signals" subtitle="Plain-language explainer">
         <div className="space-y-2 text-sm leading-relaxed text-muted">
           <p>
-            <strong className="text-foreground">Category Trigger Index</strong> drives <em>what</em> to sell: when {category}{' '}
-            scores above ~65, weather is materially lifting demand and creative should lean into the weather angle.
+            <strong className="text-foreground">Service Trigger Index</strong> drives <em>which service line</em> to push: when{' '}
+            {serviceLine} scores above ~65, weather is materially lifting demand (cold → batteries/synthetic, heat → cooling,
+            rain → wipers) and creative + Search should lean into that angle.
           </p>
           <p>
-            <strong className="text-foreground">Indoor Behavior Index</strong> drives <em>how</em> to reach people — high values
-            favor mobile, DTC convenience, and at-home messaging.
+            <strong className="text-foreground">Indoor / Visit-Friction Index</strong> drives <em>timing</em> — high values mean
+            people are reluctant to drive in now, so favor &quot;book now, come in when it clears&quot; messaging and stage post-event
+            scheduling reminders.
           </p>
           <p>
-            <strong className="text-foreground">Weather Friction Index</strong> is a brake: high friction (snow, storms,
-            constrained inventory) argues for suppressing paid acquisition to protect efficiency and customer experience.
+            <strong className="text-foreground">Weather Friction Index</strong> is a brake AND a forward signal: high friction
+            (snow, storms, maxed capacity) suppresses current visits, but that demand is deferred and released as a
+            post-event surge — plan Search + Email/CRM to capture it once the roads clear.
           </p>
           <p>
             <strong className="text-foreground">Weather Confidence</strong> scales how aggressively to act — longer horizons

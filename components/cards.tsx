@@ -76,7 +76,7 @@ export function RecommendationRow({ rec }: { rec: Recommendation }) {
         <div className="flex items-center gap-2">
           <ActionBadge action={rec.action} />
           <span className="truncate text-sm font-medium">
-            {rec.dmaName} · {rec.product_category}
+            {rec.dmaName} · {rec.service_line}
           </span>
         </div>
         <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{rec.rationale}</p>
@@ -145,6 +145,10 @@ export function CreativeBriefCard({ brief }: { brief: CreativeBrief }) {
           <div className="text-[10px] uppercase tracking-wide text-muted">Format</div>
           {brief.format}
         </div>
+      </div>
+      <div className="mt-3 rounded-lg border border-dashed border-[var(--accent)]/40 p-3 text-xs">
+        <div className="text-[10px] uppercase tracking-wide text-muted">Suggested direct-mail coupon offer</div>
+        <div className="mt-0.5 font-medium text-[var(--accent)]">{brief.couponOffer}</div>
       </div>
       <div className="mt-3 text-xs">
         <div className="text-[10px] uppercase tracking-wide text-muted">Channel guidance</div>

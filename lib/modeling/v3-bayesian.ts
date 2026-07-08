@@ -190,7 +190,7 @@ export function shrinkDmaIncrementality(
     });
     // weight the structural marginal ROAS by the observed conversion intensity so
     // DMAs with stronger realized response read as more incremental.
-    const observedIntensity = m.clicks > 0 ? m.conversions / m.clicks : 0;
+    const observedIntensity = m.clicks > 0 ? m.bookings / m.clicks : 0;
     const sample = marginalRoas * (0.6 + observedIntensity * 4);
     const arr = samplesByDma.get(m.dma);
     if (arr) arr.push(sample);

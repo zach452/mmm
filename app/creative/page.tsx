@@ -15,17 +15,18 @@ export default function CreativePage() {
     generateCreativeBrief({
       dma: s.dma,
       regime: s.latestWeather.regime,
-      category: s.primaryCategory,
+      serviceLine: s.primaryServiceLine,
       indoorIndex: s.indoorIndex,
     }),
   );
 
   return (
     <div className="space-y-6">
-      <SectionCard title="Creative Activation Briefs" subtitle="Auto-generated for the highest weather-driven DMA × category clusters. Message angles drawn from the weather-relevance taxonomy.">
+      <SectionCard title="Creative Activation Briefs" subtitle="Auto-generated for the highest weather-driven DMA × service-line clusters. Message angles drawn from the auto-services weather taxonomy.">
         <p className="text-sm leading-relaxed text-muted">
-          Each brief translates the current weather regime and consumer mindset into a ready-to-brief creative direction:
-          message angle, hooks, CTA, landing page, per-channel/funnel guidance, and a measurement plan.
+          Each brief translates the current weather regime and driver mindset into a ready-to-brief creative direction:
+          message angle, hooks, CTA, a suggested direct-mail coupon offer, landing page, per-channel/funnel guidance, and a
+          measurement plan. Google Search is always the bottom-of-funnel workhorse; CTV/YouTube prime the window pre-event.
         </p>
       </SectionCard>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

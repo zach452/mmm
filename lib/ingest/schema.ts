@@ -9,16 +9,20 @@
  *
  * This is real validation that drives the /data UI and (for sales) the data spine.
  */
-import { generateDMAs, CHANNELS, FUNNEL_STAGES, PRODUCT_CATEGORIES } from '../mockData';
+import { generateDMAs, CHANNELS, FUNNEL_STAGES, SERVICE_LINES } from '../mockData';
 import { parseCsv } from './parseCsv';
 
 export type IngestKind =
   | 'sales'
   | 'media'
   | 'promo'
-  | 'inventory'
+  | 'capacity'
   | 'creative'
   | 'weather';
+
+const PROMO_TYPES = ['Coupon', 'Digital Offer', 'Loyalty Bonus', 'Bundle'] as const;
+const DISTRIBUTION_METHODS = ['Direct Mail', 'Digital', 'In-Store'] as const;
+const CAPACITY_STATUSES = ['Healthy', 'Constrained', 'Maxed'] as const;
 
 export type ColumnType = 'date' | 'number' | 'int' | 'fraction' | 'string' | 'bool' | 'enum';
 
@@ -59,14 +63,20 @@ export interface IngestResult<T = Record<string, unknown>> {
 const fractionRule = (v: number) => v >= 0 && v <= 1;
 
 export const SCHEMAS: Record<IngestKind, ColumnSpec[]> = {
+  // Transactions (service-visit) spine.
   sales: [
     { name: 'date', type: 'date', required: true },
     { name: 'dma', type: 'string', required: true, isDma: true },
-    { name: 'product_category', type: 'enum', required: true, values: PRODUCT_CATEGORIES },
+    { name: 'location_id', type: 'string' },
+    { name: 'service_line', type: 'enum', required: true, values: SERVICE_LINES },
     { name: 'revenue', type: 'number', required: true },
-    { name: 'orders', type: 'int', required: true },
+    { name: 'avg_ticket', type: 'number' },
+    { name: 'transactions', type: 'int', required: true },
     { name: 'new_customers', type: 'int' },
     { name: 'returning_customers', type: 'int' },
+    { name: 'loyalty_member_flag', type: 'bool' },
+    { name: 'coupon_code', type: 'string' },
+    { name: 'coupon_redemption', type: 'fraction' },
     { name: 'margin', type: 'fraction' },
   ],
   media: [
@@ -77,28 +87,35 @@ export const SCHEMAS: Record<IngestKind, ColumnSpec[]> = {
     { name: 'spend', type: 'number', required: true },
     { name: 'impressions', type: 'int' },
     { name: 'clicks', type: 'int' },
-    { name: 'conversions', type: 'int' },
+    { name: 'bookings', type: 'int' },
+    { name: 'coupon_impressions', type: 'int' },
   ],
   promo: [
     { name: 'date', type: 'date', required: true },
     { name: 'promo_name', type: 'string', required: true },
-    { name: 'discount_level', type: 'fraction', required: true },
-    { name: 'product_category', type: 'enum', values: PRODUCT_CATEGORIES },
+    { name: 'promo_type', type: 'enum', required: true, values: PROMO_TYPES },
+    { name: 'discount_pct', type: 'fraction', required: true },
+    { name: 'service_line', type: 'enum', values: SERVICE_LINES },
     { name: 'dma', type: 'string', isDma: true },
+    { name: 'distribution_method', type: 'enum', values: DISTRIBUTION_METHODS },
+    { name: 'distribution_count', type: 'int' },
   ],
-  inventory: [
+  // Service-network capacity (replaces retail inventory for a physical service business).
+  capacity: [
     { name: 'date', type: 'date', required: true },
     { name: 'dma', type: 'string', required: true, isDma: true },
-    { name: 'product_category', type: 'enum', required: true, values: PRODUCT_CATEGORIES },
-    { name: 'inventory_status', type: 'enum', required: true, values: ['Healthy', 'Constrained', 'Out of Stock'] },
-    { name: 'stock_level', type: 'fraction' },
+    { name: 'location_id', type: 'string' },
+    { name: 'service_bays_available', type: 'int', required: true },
+    { name: 'avg_wait_time_minutes', type: 'int' },
+    { name: 'hours_of_operation', type: 'string' },
+    { name: 'capacity_status', type: 'enum', values: CAPACITY_STATUSES },
   ],
   creative: [
     { name: 'creative_id', type: 'string', required: true },
     { name: 'channel', type: 'enum', required: true, values: CHANNELS },
     { name: 'funnel_stage', type: 'enum', values: FUNNEL_STAGES },
     { name: 'message_angle', type: 'string' },
-    { name: 'product_category', type: 'enum', values: PRODUCT_CATEGORIES },
+    { name: 'service_line', type: 'enum', values: SERVICE_LINES },
     { name: 'format', type: 'enum', values: ['Static', 'Video', 'Carousel', 'UGC', 'Story'] },
     { name: 'launch_date', type: 'date', required: true },
   ],
@@ -217,10 +234,10 @@ function checkCell(spec: ColumnSpec, value: string): string | null {
 }
 
 const HEADER_HINTS: Record<IngestKind, string[]> = {
-  sales: ['revenue', 'orders', 'product_category'],
+  sales: ['revenue', 'transactions', 'service_line'],
   media: ['spend', 'channel', 'impressions'],
-  promo: ['promo_name', 'discount_level'],
-  inventory: ['inventory_status', 'stock_level'],
+  promo: ['promo_name', 'promo_type'],
+  capacity: ['service_bays_available', 'avg_wait_time_minutes', 'capacity_status'],
   creative: ['creative_id', 'launch_date'],
   weather: ['temperature', 'precipitation'],
 };

@@ -10,7 +10,7 @@ const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin']
 
 export const metadata: Metadata = {
   title: 'Geo Demand Engine',
-  description: 'Weather-responsive geo MMM and budget-investment decisioning for media agencies.',
+  description: 'Weather-responsive geo MMM and budget-investment decisioning for a quick-lube auto-services chain.',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

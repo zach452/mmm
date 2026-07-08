@@ -1,4 +1,4 @@
-// Core domain types for Geo Demand Engine
+// Core domain types for Geo Demand Engine — Quick-Lube Auto Services configuration.
 
 export type Region =
   | 'Northeast'
@@ -8,22 +8,24 @@ export type Region =
   | 'Pacific Northwest'
   | 'Southwest';
 
-export type ProductCategory =
-  | 'At-Home Beauty'
-  | 'Outerwear'
-  | 'Footwear'
-  | 'Hydration'
-  | 'Baby Care'
-  | 'Wellness';
+// Service lines for a quick-lube / auto-services chain (Jiffy Lube-style).
+export type ServiceLine =
+  | 'Standard Oil Change'
+  | 'Synthetic Oil Change'
+  | 'Tire Services'
+  | 'Wiper Blades'
+  | 'Battery/Electrical'
+  | 'Cooling System'
+  | 'Air Filtration';
 
 export type Channel =
-  | 'Meta'
   | 'Google Search'
-  | 'TikTok'
+  | 'Meta'
   | 'YouTube'
   | 'CTV'
-  | 'Pinterest'
-  | 'Amazon/RMN';
+  | 'Direct Mail'
+  | 'Email/CRM'
+  | 'Programmatic Display';
 
 export type FunnelStage = 'TOF' | 'MOF' | 'BOF' | 'Retention';
 
@@ -59,6 +61,8 @@ export interface DMA {
   climate: ClimateProfile;
   lat: number; // approximate metro latitude (for live weather API lookup)
   lon: number; // approximate metro longitude
+  locationCount: number; // number of service locations in this DMA (capacity ceiling)
+  locationDensity: 'High' | 'Medium' | 'Low'; // derived from locationCount / population
 }
 
 export interface WeatherObservation {
@@ -80,15 +84,18 @@ export interface WeatherForecast extends WeatherObservation {
   horizonDays: number;
 }
 
-export interface SalesObservation {
+// A day of service-bay activity for a DMA × service line.
+export interface ServiceObservation {
   date: string;
   dma: string;
-  product_category: ProductCategory;
+  service_line: ServiceLine;
   revenue: number;
-  orders: number;
+  transactions: number; // completed service visits (was: orders)
   new_customers: number;
   returning_customers: number;
   margin: number; // contribution margin fraction 0-1
+  avg_ticket: number; // average revenue per visit ($)
+  coupon_redemption_rate: number; // fraction of transactions redeeming a coupon 0-1
 }
 
 export interface MediaObservation {
@@ -99,25 +106,34 @@ export interface MediaObservation {
   spend: number;
   impressions: number;
   clicks: number;
-  conversions: number;
+  bookings: number; // booked/attributed service visits (was: conversions)
+  coupon_impressions: number; // impressions carrying a coupon/offer
 }
+
+export type PromoType = 'Coupon' | 'Digital Offer' | 'Loyalty Bonus' | 'Bundle';
+export type DistributionMethod = 'Direct Mail' | 'Digital' | 'In-Store';
 
 export interface PromoObservation {
   date: string;
   promo_name: string;
+  promo_type: PromoType; // Direct-mail coupons are core to auto-services marketing
   discount_level: number; // 0-1
-  product_category: ProductCategory;
+  service_line: ServiceLine;
   dma: string;
+  distribution_method: DistributionMethod;
 }
 
-export type InventoryStatus = 'Healthy' | 'Constrained' | 'Out of Stock';
+// Capacity status of a DMA's service network. A "Maxed" DMA cannot absorb more
+// demand (long waits, all bays full) and should NOT receive more spend.
+export type CapacityStatus = 'Healthy' | 'Constrained' | 'Maxed';
 
-export interface InventoryObservation {
+export interface CapacityObservation {
   date: string;
   dma: string;
-  product_category: ProductCategory;
-  inventory_status: InventoryStatus;
-  stock_level: number; // 0-1 fraction of target
+  service_bays_available: number;
+  avg_wait_time_minutes: number;
+  capacity_status: CapacityStatus;
+  utilization: number; // 0-1 fraction of bay-hours utilized
 }
 
 export type CreativeFormat = 'Static' | 'Video' | 'Carousel' | 'UGC' | 'Story';
@@ -127,7 +143,7 @@ export interface CreativeObservation {
   channel: Channel;
   funnel_stage: FunnelStage;
   message_angle: string;
-  product_category: ProductCategory;
+  service_line: ServiceLine;
   format: CreativeFormat;
   launch_date: string;
 }
@@ -138,7 +154,7 @@ export interface DecompositionResult {
   mediaLift: number;
   interactionLift: number;
   promoLift: number;
-  inventoryEffect: number;
+  capacityEffect: number; // demand suppressed when a DMA is capacity-constrained
   seasonality: number;
   noise: number;
   observed: number;
@@ -149,7 +165,7 @@ export interface Recommendation {
   dma: string;
   dmaName: string;
   region: Region;
-  product_category: ProductCategory;
+  service_line: ServiceLine;
   regime: WeatherRegime;
   action: Action;
   confidence: number; // 0-1
@@ -168,7 +184,7 @@ export interface Recommendation {
 
 export interface ScenarioInput {
   dma: string;
-  product_category: ProductCategory;
+  service_line: ServiceLine;
   regime: WeatherRegime;
   timeWindow: 'pre' | 'during' | 'post';
   currentBudget: number;
@@ -178,7 +194,7 @@ export interface ScenarioInput {
   marginAssumption: number; // 0-1
   cacTarget: number;
   merTarget: number;
-  inventoryReady: boolean;
+  capacityReady: boolean;
   creativeReady: boolean;
 }
 
@@ -205,7 +221,7 @@ export interface OptimizerConstraint {
   riskTolerance: 'Conservative' | 'Balanced' | 'Aggressive';
   includedChannels: Channel[];
   includedRegions: Region[];
-  inventoryConstraint: boolean;
+  capacityConstraint: boolean;
   creativeReadiness: boolean;
 }
 
@@ -229,12 +245,13 @@ export interface CreativeBrief {
   dmaName: string;
   region: Region;
   regime: WeatherRegime;
-  product_category: ProductCategory;
+  service_line: ServiceLine;
   weatherContext: string;
   consumerMindset: string;
   messageAngle: string;
   hooks: string[];
   cta: string;
+  couponOffer: string; // suggested direct-mail / digital coupon offer
   landingPageRec: string;
   channelGuidance: { channel: Channel; funnel: FunnelStage; note: string }[];
   measurementPlan: string;

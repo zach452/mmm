@@ -5,8 +5,8 @@ import {
   Action,
   Channel,
   FunnelStage,
-  ProductCategory,
   ScenarioOutput,
+  ServiceLine,
   WeatherRegime,
 } from '@/lib/types';
 import {
@@ -25,14 +25,14 @@ export interface SimDMA {
   baseline: number;
 }
 
-const CATEGORIES: ProductCategory[] = ['At-Home Beauty', 'Outerwear', 'Footwear', 'Hydration', 'Baby Care', 'Wellness'];
+const SERVICE_LINES: ServiceLine[] = ['Standard Oil Change', 'Synthetic Oil Change', 'Tire Services', 'Wiper Blades', 'Battery/Electrical', 'Cooling System', 'Air Filtration'];
 const REGIMES: WeatherRegime[] = ['Normal', 'Cold Snap', 'Heat Wave', 'Rainy Weekend', 'Snow Event', 'High UV', 'Poor Air Quality', 'Severe Storm', 'First Warm Weekend', 'First Cold Snap'];
-const CHANNELS: Channel[] = ['Meta', 'Google Search', 'TikTok', 'YouTube', 'CTV', 'Pinterest', 'Amazon/RMN'];
+const CHANNELS: Channel[] = ['Google Search', 'Meta', 'YouTube', 'CTV', 'Direct Mail', 'Email/CRM', 'Programmatic Display'];
 const STAGES: FunnelStage[] = ['TOF', 'MOF', 'BOF', 'Retention'];
 
 export default function Simulator({ dmas }: { dmas: SimDMA[] }) {
   const [dmaId, setDmaId] = useState(dmas[0].id);
-  const [category, setCategory] = useState<ProductCategory>('Outerwear');
+  const [serviceLine, setServiceLine] = useState<ServiceLine>('Synthetic Oil Change');
   const [regime, setRegime] = useState<WeatherRegime>('Cold Snap');
   const [timeWindow, setTimeWindow] = useState<'pre' | 'during' | 'post'>('during');
   const [currentBudget, setCurrentBudget] = useState(20000);
@@ -42,13 +42,13 @@ export default function Simulator({ dmas }: { dmas: SimDMA[] }) {
   const [margin, setMargin] = useState(0.42);
   const [cacTarget, setCacTarget] = useState(45);
   const [merTarget, setMerTarget] = useState(4);
-  const [inventoryReady, setInventoryReady] = useState(true);
+  const [capacityReady, setCapacityReady] = useState(true);
   const [creativeReady, setCreativeReady] = useState(true);
 
   const dma = dmas.find((d) => d.id === dmaId)!;
 
   const output: ScenarioOutput = useMemo(() => {
-    const trigger = calculateCategoryTriggerIndex(category, regime, { tempAnomaly: regime.includes('Cold') ? -8 : regime === 'Heat Wave' ? 8 : 0 });
+    const trigger = calculateCategoryTriggerIndex(serviceLine, regime, { tempAnomaly: regime.includes('Cold') ? -8 : regime === 'Heat Wave' ? 8 : 0 });
     const interaction = estimateWeatherMediaInteraction({ regime, channel, funnel, triggerIndex: trigger });
     const newBudget = Math.max(0, currentBudget + proposedChange);
     const halfSat = currentBudget * 1.1 || 1000;
@@ -62,7 +62,7 @@ export default function Simulator({ dmas }: { dmas: SimDMA[] }) {
       interactionMultiplier: interaction,
       promoActive: false,
       promoDiscount: 0,
-      inventoryHealthy: inventoryReady,
+      capacityHealthy: capacityReady,
       seed: dma.baseline + trigger,
     });
     const incrementalRevenue = Math.round((mediaInc - baseInc) * interaction + decomp.weatherLift * 0.3);
@@ -77,7 +77,7 @@ export default function Simulator({ dmas }: { dmas: SimDMA[] }) {
     const contributionMargin = Math.round(revLift * margin);
 
     let riskLevel: 'Low' | 'Medium' | 'High' = 'Low';
-    if (!inventoryReady || regime === 'Severe Storm') riskLevel = 'High';
+    if (!capacityReady || regime === 'Severe Storm') riskLevel = 'High';
     else if (!creativeReady || confidence < 0.55 || cac > cacTarget * 1.3) riskLevel = 'Medium';
 
     let action: Action = 'Monitor';
@@ -101,14 +101,14 @@ export default function Simulator({ dmas }: { dmas: SimDMA[] }) {
       riskLevel,
       explanation,
     };
-  }, [dma, category, regime, timeWindow, currentBudget, proposedChange, channel, funnel, margin, cacTarget, merTarget, inventoryReady, creativeReady]);
+  }, [dma, serviceLine, regime, timeWindow, currentBudget, proposedChange, channel, funnel, margin, cacTarget, merTarget, capacityReady, creativeReady]);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
       <SectionCard title="Scenario Inputs" subtitle="Adjust and watch the output update live">
         <div className="grid grid-cols-2 gap-3">
           <Field label="DMA"><select value={dmaId} onChange={(e) => setDmaId(e.target.value)} className="sel">{dmas.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
-          <Field label="Category"><select value={category} onChange={(e) => setCategory(e.target.value as ProductCategory)} className="sel">{CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
+          <Field label="Service line"><select value={serviceLine} onChange={(e) => setServiceLine(e.target.value as ServiceLine)} className="sel">{SERVICE_LINES.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
           <Field label="Weather regime"><select value={regime} onChange={(e) => setRegime(e.target.value as WeatherRegime)} className="sel">{REGIMES.map((r) => <option key={r} value={r}>{r}</option>)}</select></Field>
           <Field label="Time window"><select value={timeWindow} onChange={(e) => setTimeWindow(e.target.value as 'pre' | 'during' | 'post')} className="sel"><option value="pre">Pre-event</option><option value="during">During-event</option><option value="post">Post-event</option></select></Field>
           <Field label="Channel"><select value={channel} onChange={(e) => setChannel(e.target.value as Channel)} className="sel">{CHANNELS.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
@@ -120,7 +120,7 @@ export default function Simulator({ dmas }: { dmas: SimDMA[] }) {
           <Range label={`MER target — ${merTarget}x`} min={1} max={8} step={0.5} value={merTarget} onChange={setMerTarget} />
         </div>
         <div className="mt-3 flex gap-4">
-          <Toggle label="Inventory ready" value={inventoryReady} onChange={setInventoryReady} />
+          <Toggle label="Capacity available" value={capacityReady} onChange={setCapacityReady} />
           <Toggle label="Creative ready" value={creativeReady} onChange={setCreativeReady} />
         </div>
         <style>{`.sel{background:var(--surface-2);border:1px solid var(--border);border-radius:0.375rem;padding:0.375rem 0.5rem;font-size:0.75rem;color:var(--foreground);outline:none;width:100%}`}</style>
@@ -154,9 +154,9 @@ function buildExplanation(action: Action, rev: number, mer: number, cac: number,
     case 'Test':
       return `Promising but not a slam-dunk — run a controlled geo test first. ${timing}`;
     case 'Suppress':
-      return `Hold spend. ${regime} or fulfillment risk makes this a poor acquisition window; protect efficiency. ${timing}`;
+      return `Hold spend. ${regime} or capacity limits make this a poor acquisition window; don't buy demand the bays can't service. ${timing}`;
     case 'Ignore':
-      return `Low marginal return (MER ${mer}x). Added spend mostly subsidizes demand that converts anyway. ${timing}`;
+      return `Low marginal return (MER ${mer}x). Added spend mostly subsidizes walk-in demand that converts anyway. ${timing}`;
     default:
       return `Mixed signal — keep monitoring. ${timing}`;
   }

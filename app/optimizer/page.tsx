@@ -1,11 +1,11 @@
 import { getDMASnapshots } from '@/lib/derive';
-import { estimateWeatherMediaInteraction, OptimizerOpportunity } from '@/lib/modeling';
+import { channelHalfSaturation, estimateWeatherMediaInteraction, OptimizerOpportunity } from '@/lib/modeling';
 import { calibrateHillCurve } from '@/lib/modeling/calibration';
 import { generateDMAs, generateMedia } from '@/lib/mockData';
 import Optimizer, { ChannelCalibration } from '@/components/Optimizer';
 import { Channel } from '@/lib/types';
 
-const OPT_CHANNELS: Channel[] = ['Meta', 'Google Search', 'TikTok', 'Amazon/RMN', 'CTV'];
+const OPT_CHANNELS: Channel[] = ['Google Search', 'Meta', 'CTV', 'Direct Mail', 'Email/CRM'];
 
 // Calibrate a Hill curve per channel from the historical media spend → conversions
 // (the mock media observations). Runs server-side; results are shown in the UI and
@@ -15,7 +15,7 @@ function calibrateChannels(): Record<string, ChannelCalibration> {
   const byChannel = new Map<Channel, { spend: number; conversions: number }[]>();
   for (const m of media) {
     const arr = byChannel.get(m.channel) ?? [];
-    arr.push({ spend: m.spend, conversions: m.conversions });
+    arr.push({ spend: m.spend, conversions: m.bookings });
     byChannel.set(m.channel, arr);
   }
   const out: Record<string, ChannelCalibration> = {};
@@ -50,7 +50,7 @@ export default function OptimizerPage() {
         region: s.dma.region,
         channel,
         currentSpend: baseSpend,
-        halfSaturation: baseSpend * 1.1,
+        halfSaturation: channelHalfSaturation(channel, baseSpend),
         maxResponse: baseline * 0.4,
         slope: 1.3,
         interactionMultiplier: interaction,
